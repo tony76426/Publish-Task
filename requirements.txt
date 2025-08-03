@@ -1,7 +1,0 @@
-flask
-openai>=1.10.0
-flask-cors
-gunicorn
-python-dotenv
-from dotenv import load_dotenv
-load_dotenv()
