@@ -1,0 +1,85 @@
+name: VERA Android APK
+on:
+  push:
+    branches: [vera-mvp]
+    paths:
+      - 'android/**'
+      - 'vera_app.py'
+      - 'vera_ui.html'
+      - '.github/workflows/vera-apk.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: vera-apk
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Backend smoke checks (mocked credentials)
+        run: |
+          pip install -r requirements-vera.txt
+          python -m py_compile vera_app.py app.py
+          python - <<'PY'
+          import os
+          from unittest.mock import patch, Mock
+          from vera_app import app
+          os.environ["VERA_ACCESS_TOKEN"]="ci-only-token-not-a-secret"
+          os.environ["OPENAI_API_KEY"]="mock-test-key"
+          c=app.test_client()
+          h={"Authorization":"Bearer ci-only-token-not-a-secret"}
+          assert c.get("/health").json["status"]=="ok"
+          assert c.get("/app").status_code==200
+          assert c.post("/api/status").status_code==401
+          assert c.post("/api/status",headers=h).json["configured"]
+          assert c.post("/api/realtime/call",headers=h,json={"sdp":"bad"}).status_code==400
+          with patch("vera_app.requests.post",return_value=Mock(ok=True,text="v=0\r\n")):
+              assert c.post("/api/realtime/call",headers=h,json={"sdp":"v=0\r\n"}).json["sdp"].startswith("v=0")
+          with patch("vera_app.requests.post",return_value=Mock(ok=True,**{"json.return_value":{"output":[{"type":"message","content":[{"type":"output_text","text":"test summary"}]}]}})):
+              assert c.post("/api/summary",headers=h,json={"transcript":"test"}).json["summary"]=="test summary"
+          print("All mocked backend smoke checks passed.")
+          PY
+      - name: Validate UI JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s=Path("vera_ui.html").read_text()
+          Path("/tmp/vera.js").write_text(s.split("<script>",1)[1].split("</script>",1)[0])
+          PY
+          node --check /tmp/vera.js
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Install Android SDK
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build APK
+        working-directory: android
+        run: gradle --no-daemon :app:assembleDebug
+      - name: Verify APK signature
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose android/app/build/outputs/apk/debug/app-debug.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk VERA-Nexus.apk
+          sha256sum VERA-Nexus.apk > VERA-Nexus.apk.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VERA-Nexus-APK
+          path: |
+            VERA-Nexus.apk
+            VERA-Nexus.apk.sha256
+      - name: Publish test prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="vera-nexus-v0.1.0-${GITHUB_RUN_NUMBER}"
+          gh release create "$tag" VERA-Nexus.apk VERA-Nexus.apk.sha256 --target "$GITHUB_SHA" --prerelease --title "VERA Nexus 0.1.0 test build" --notes "Personal test build. Requires private VERA_ACCESS_TOKEN. Firebase, Gmail automation and cloud memory not yet enabled. Debug signature; not for production distribution."
