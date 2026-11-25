@@ -1,0 +1,2 @@
+# VERA Nexus Android MVP
+The APK is a native Android shell around the fixed HTTPS VERA application. Enter your private VERA_ACCESS_TOKEN, never your OpenAI key. Voice is WebRTC; microphone is active only during a foreground call. Transcript and tasks are stored on-device; summary generation is authenticated on Render. FCM/Gmail automation and cloud memory are not configured in this version. Debug build for personal testing, not production distribution.
