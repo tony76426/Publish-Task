@@ -6,7 +6,7 @@
 <div class="card"><h2>即時對話紀錄</h2><div id="transcript"><small>尚未開始通話</small></div><div class="actions"><button id="summary" class="secondary" disabled>產生 AI 摘要</button></div><div id="summaryBox" hidden><textarea id="summaryText" rows="9"></textarea><div class="actions"><button id="saveSummary">儲存摘要</button><button id="shareSummary" class="secondary">分享摘要</button></div></div></div></section>
 <section id="tasks" hidden><div class="card"><h2>待辦任務</h2><input id="taskInput" maxlength="500" placeholder="新增待辦事項"><button id="addTask">新增任務</button><div id="taskList"></div></div><div class="card"><h2>記事</h2><textarea id="notes" rows="9" placeholder="記錄想法與工作事項"></textarea><button id="saveNotes">儲存記事</button><p class="muted" id="noteStatus"></p></div></section>
 <section id="history" hidden><div class="card"><h2>通話與摘要紀錄</h2><div id="historyList"></div></div></section>
-<section id="settings" hidden><div class="card"><h2>私人連線</h2><p class="muted">輸入你在 Render 設定的 VERA_ACCESS_TOKEN，不是 OpenAI API Key。此憑證只保留在這次開啟的頁面記憶體。</p><input id="token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="VERA_ACCESS_TOKEN"><div class="actions"><button id="test">驗證連線</button><button id="forget" class="secondary">清除憑證</button></div><p id="testStatus"></p></div><div class="card"><h2>隱私與功能狀態</h2><p>語音經 OpenAI 處理；文字紀錄與記事儲存在本機。通話限前景使用。Firebase 背景來電、Gmail 自動任務及雲端永久記憶尚未啟用。</p><button id="clear" class="danger">清除本機全部紀錄</button></div></section>
+<section id="settings" hidden><div class="card"><h2>私人連線</h2><p class="muted">輸入你在 Render 設定的 VERA_ACCESS_TOKEN，不是 OpenAI API Key。Android APP 首次驗證成功後，會使用手機加密儲存憑證，下次自動連線。網頁版不會永久保存憑證。</p><input id="token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="VERA_ACCESS_TOKEN"><div class="actions"><button id="test">驗證連線</button><button id="forget" class="secondary">清除憑證</button></div><p id="testStatus"></p></div><div class="card"><h2>隱私與功能狀態</h2><p>語音經 OpenAI 處理；文字紀錄與記事儲存在本機。通話限前景使用。Firebase 背景來電、Gmail 自動任務及雲端永久記憶尚未啟用。</p><button id="clear" class="danger">清除本機全部紀錄</button></div></section>
 </main><nav class="nav"><button data-page="home" class="sel">通話</button><button data-page="tasks">任務</button><button data-page="history">紀錄</button><button data-page="settings">設定</button></nav>
 <script>
 'use strict';
@@ -18,7 +18,7 @@ let histories=read('history',[]),tasks=read('tasks',[]);
 function page(p){for(const id of ['home','tasks','history','settings'])$(id).hidden=id!==p;document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('sel',b.dataset.page===p));if(p==='history')renderHistory();if(p==='tasks')renderTasks()}
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>page(b.dataset.page));
 function token(){return $('token').value.trim()}
-async function api(path,body){if(!token()){page('settings');throw Error('請先輸入 VERA 連線憑證')}const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token()},body:JSON.stringify(body),cache:'no-store'});let j;try{j=await response.json()}catch{throw Error('伺服器回應異常：'+response.status)}if(!response.ok)throw Error(j.error||('HTTP '+response.status));return j}
+async function api(path,body){if(!token()){page('settings');throw Error('請先輸入 VERA 連線憑證')}const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token()},body:JSON.stringify(body),cache:'no-store'});let j;try{j=await response.json()}catch{throw Error('伺服器回應異常：'+response.status)}if(!response.ok){const e=Error(j.error||('HTTP '+response.status));e.status=response.status;throw e;}return j}
 function entry(role,value,id,delta=false){if(!value)return;let e=id&&rowMap.get(id);if(!e){e={role,text:''};rows.push(e);if(id)rowMap.set(id,e)}e.text=delta?e.text+value:value;renderTranscript()}
 function renderTranscript(){const box=$('transcript');box.replaceChildren();for(const r of rows){const d=document.createElement('div');d.className='entry';const b=document.createElement('b');b.textContent=r.role;d.append(b,document.createTextNode(r.text));box.append(d)}box.scrollTop=box.scrollHeight;$('summary').disabled=!rows.length||busy}
 function send(obj){if(dc&&dc.readyState==='open')dc.send(JSON.stringify(obj))}
@@ -53,7 +53,7 @@ $('micTest').onclick=async()=>{
  catch(e){text('callError',micError(e));}
  finally{probe?.getTracks().forEach(t=>t.stop());testingMic=false;$('micTest').disabled=false;$('start').disabled=false;}
 };
-async function start(){if(busy||testingMic)return;if(!token()){page('settings');return}if(!checkMicPermission())return;if(!navigator.mediaDevices||!window.RTCPeerConnection){text('callError','此裝置不支援安全的 WebRTC 語音連線。');return}
+async function start(){if(busy||testingMic||verifying)return;if(!token()){page('settings');return}if(!checkMicPermission())return;if(!navigator.mediaDevices||!window.RTCPeerConnection){text('callError','此裝置不支援安全的 WebRTC 語音連線。');return}
  const my=++epoch;busy=true;sessionId=String(Date.now());lastId=sessionId;rows=[];rowMap=new Map();$('summaryBox').hidden=true;renderTranscript();controls(true);text('clock','00:00');text('callError','');text('status','連線中…');
  let phase='mic';try{const s=await captureMic();if(epoch!==my){s.getTracks().forEach(t=>t.stop());return}stream=s;phase='webrtc';text('status','麥克風已啟動，正在連接 AI…');
  const p=new RTCPeerConnection();pc=p;p.ontrack=e=>{$('remote').srcObject=e.streams[0]||new MediaStream([e.track]);$('remote').play().catch(()=>{})};s.getTracks().forEach(t=>p.addTrack(t,s));
@@ -72,7 +72,28 @@ $('shareSummary').onclick=()=>share($('summaryText').value);
 function renderHistory(){const box=$('historyList');box.replaceChildren();if(!histories.length)box.textContent='尚無紀錄';for(const h of histories){const d=document.createElement('div');d.className='entry';const b=document.createElement('b');b.textContent=h.at+' · '+(h.topic||'語音通話');const p=document.createElement('p');p.textContent=h.summary||h.rows.map(x=>x.role+'：'+x.text).join('\n');const s=document.createElement('button');s.className='secondary';s.textContent='分享';s.onclick=()=>share(b.textContent+'\n'+p.textContent);d.append(b,p,s);box.append(d)}}
 function renderTasks(){const box=$('taskList');box.replaceChildren();for(const t of tasks){const d=document.createElement('div');d.className='entry task';const c=document.createElement('input');c.type='checkbox';c.checked=t.done;const s=document.createElement('span');s.textContent=t.title;s.className=t.done?'done':'';c.onchange=()=>{t.done=c.checked;write('tasks',tasks);renderTasks()};const b=document.createElement('button');b.className='secondary';b.textContent='討論';b.onclick=()=>{ $('topic').value=t.title;page('home')};d.append(c,s,b);box.append(d)}}
 $('addTask').onclick=()=>{let v=$('taskInput').value.trim();if(!v)return;tasks.unshift({title:v,done:false});write('tasks',tasks);$('taskInput').value='';renderTasks()};$('notes').value=read('notes','');$('saveNotes').onclick=()=>{if(write('notes',$('notes').value))text('noteStatus','已儲存')};
-$('test').onclick=async()=>{text('testStatus','驗證中…');try{const r=await api('/api/status',{});text('testStatus',r.configured?'後端連線及憑證正確；語音 API 待通話驗證。':'後端尚未設定 OpenAI 金鑰。')}catch(e){text('testStatus',e.message)}};
-$('forget').onclick=()=>{$('token').value='';text('testStatus','已清除')};$('clear').onclick=()=>{if(confirm('永久清除本機所有通話、記事及任務？')){for(const k of ['history','tasks','notes'])localStorage.removeItem('vera.'+k);histories=[];tasks=[];$('notes').value='';renderHistory();renderTasks()}};
-if(!token())page('settings');
+let verifying=false, loginEpoch=0;
+async function verifyLogin(automatic=false){
+ if(verifying)return;
+ const value=token();if(!value){page('settings');text('testStatus','請輸入 VERA 連線憑證');return}
+ const my=++loginEpoch;verifying=true;$('test').disabled=true;$('token').disabled=true;
+ text('testStatus',automatic?'正在自動連線…':'驗證中…');
+ try{
+  const r=await api('/api/status',{});
+  if(my!==loginEpoch)return;
+  let saved=false;
+  if(window.VeraAndroid?.saveVerifiedLogin){try{saved=window.VeraAndroid.saveVerifiedLogin(value)}catch{}}
+  text('testStatus',r.configured?(saved?'已驗證並安全記住登入，下次自動連線。':'憑證正確；本次已連線，尚未永久儲存。'):'憑證正確，但後端尚未設定 OpenAI 金鑰。');
+  if(r.configured){page('home');text('status','VERA 已連線，準備就緒');}
+ }catch(e){
+  if(my!==loginEpoch)return;
+  if(e.status===401){try{window.VeraAndroid?.clearVerifiedLogin?.()}catch{}$('token').value='';}
+  page('settings');text('testStatus',e.status===401?'連線憑證已失效，請重新輸入。':'連線未成功：'+e.message);
+ }finally{if(my===loginEpoch){verifying=false;$('test').disabled=false;$('token').disabled=false;}}
+}
+$('test').onclick=()=>verifyLogin(false);
+$('forget').onclick=()=>{loginEpoch++;verifying=false;$('test').disabled=false;$('token').disabled=false;if(busy)stop();$('token').value='';let cleared=true;try{if(window.VeraAndroid?.clearVerifiedLogin)cleared=window.VeraAndroid.clearVerifiedLogin()}catch{cleared=false}text('testStatus',cleared?'已登出並清除儲存憑證':'本機憑證清除失敗，請至 Android 設定清除 APP 資料。');};
+$('clear').onclick=()=>{if(confirm('永久清除本機所有通話、記事及任務？')){for(const k of ['history','tasks','notes'])localStorage.removeItem('vera.'+k);histories=[];tasks=[];$('notes').value='';renderHistory();renderTasks()}};
+try{if(window.VeraAndroid?.loadVerifiedLogin)$('token').value=window.VeraAndroid.loadVerifiedLogin()||''}catch{}
+if(token()){page('home');verifyLogin(true)}else page('settings');
 </script></body></html>
