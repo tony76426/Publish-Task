@@ -1,5 +1,14 @@
 package tw.vera.nexus;
 import android.Manifest;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.util.Base64;
+import java.security.KeyStore;
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
+import java.nio.charset.StandardCharsets;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -19,6 +28,42 @@ public class MainActivity extends Activity {
  private boolean requestingMic=false;
  private static final String HOST="publish-task.onrender.com";
  private boolean allowed(Uri u){return u!=null && "https".equals(u.getScheme()) && HOST.equals(u.getHost()) && (u.getPort()==-1 || u.getPort()==443);}
+ private static final String LOGIN_KEY="vera_nexus_token_v1";
+ private SecretKey loginKey(boolean create) throws Exception{
+  KeyStore ks=KeyStore.getInstance("AndroidKeyStore");ks.load(null);
+  if(ks.containsAlias(LOGIN_KEY))return (SecretKey)ks.getKey(LOGIN_KEY,null);
+  if(!create)return null;
+  KeyGenerator gen=KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore");
+  gen.init(new KeyGenParameterSpec.Builder(LOGIN_KEY,KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT)
+    .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+    .setKeySize(256).setRandomizedEncryptionRequired(true).build());
+  return gen.generateKey();
+ }
+ private synchronized boolean saveLogin(String token){
+  if(token==null||token.length()<16||token.length()>4096)return false;
+  try{
+   Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,loginKey(true));
+   byte[] encrypted=c.doFinal(token.getBytes(StandardCharsets.UTF_8));
+   return getSharedPreferences("vera_secure_login",MODE_PRIVATE).edit()
+     .putString("iv",Base64.encodeToString(c.getIV(),Base64.NO_WRAP))
+     .putString("ciphertext",Base64.encodeToString(encrypted,Base64.NO_WRAP)).commit();
+  }catch(Exception e){return false;}
+ }
+ private synchronized String loadLogin(){
+  try{
+   android.content.SharedPreferences p=getSharedPreferences("vera_secure_login",MODE_PRIVATE);
+   String iv=p.getString("iv",null),enc=p.getString("ciphertext",null);
+   if(iv==null||enc==null)return "";
+   SecretKey key=loginKey(false);if(key==null)return "";
+   Cipher c=Cipher.getInstance("AES/GCM/NoPadding");
+   c.init(Cipher.DECRYPT_MODE,key,new GCMParameterSpec(128,Base64.decode(iv,Base64.NO_WRAP)));
+   return new String(c.doFinal(Base64.decode(enc,Base64.NO_WRAP)),StandardCharsets.UTF_8);
+  }catch(Exception e){return "";}
+ }
+ private synchronized boolean clearLogin(){
+  boolean ok=getSharedPreferences("vera_secure_login",MODE_PRIVATE).edit().clear().commit();
+  try{KeyStore ks=KeyStore.getInstance("AndroidKeyStore");ks.load(null);ks.deleteEntry(LOGIN_KEY);return ok;}catch(Exception e){return false;}
+ }
  private boolean micGranted(){return checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED;}
  private void requestMic(){
   if(micGranted() || requestingMic || isFinishing()) return;
@@ -55,6 +100,9 @@ public class MainActivity extends Activity {
   });
   web.addJavascriptInterface(new Object(){
    @JavascriptInterface public void share(String t){if(t==null||t.length()>100000)return;runOnUiThread(()->{Intent i=new Intent(Intent.ACTION_SEND);i.setType("text/plain");i.putExtra(Intent.EXTRA_TEXT,t);startActivity(Intent.createChooser(i,"分享 VERA 摘要"));});}
+   @JavascriptInterface public boolean saveVerifiedLogin(String token){return saveLogin(token);}
+   @JavascriptInterface public String loadVerifiedLogin(){return loadLogin();}
+   @JavascriptInterface public boolean clearVerifiedLogin(){return clearLogin();}
    @JavascriptInterface public boolean hasMicPermission(){return micGranted();}
    @JavascriptInterface public void askMicPermission(){runOnUiThread(()->requestMic());}
   },"VeraAndroid");
