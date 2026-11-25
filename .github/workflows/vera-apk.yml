@@ -83,5 +83,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="vera-nexus-v0.1.1-${GITHUB_RUN_NUMBER}"
-          gh release create "$tag" VERA-Nexus.apk VERA-Nexus.apk.sha256 --target "$GITHUB_SHA" --prerelease --title "VERA Nexus 0.1.1 microphone fix" --notes "Microphone permission and diagnostics fix. Requires private VERA_ACCESS_TOKEN. Firebase, Gmail automation and cloud memory not yet enabled. Debug signature; not for production distribution."
+          tag="vera-nexus-v0.1.2-${GITHUB_RUN_NUMBER}"
+          gh release create "$tag" VERA-Nexus.apk VERA-Nexus.apk.sha256 --target "$GITHUB_SHA" --prerelease --title "VERA Nexus 0.1.2 secure login" --notes "Microphone diagnostics and encrypted remembered login. Requires private VERA_ACCESS_TOKEN. Firebase, Gmail automation and cloud memory not yet enabled. Debug signature; not for production distribution."
