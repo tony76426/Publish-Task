@@ -27,11 +27,13 @@ public class MainActivity extends Activity {
  private PermissionRequest pending;
  private boolean requestingMic=false;
  private volatile String pendingReminder="";
+ private String pendingBackup=null;
+ private static final int SAVE_BACKUP=43,OPEN_BACKUP=44;
  private void captureReminder(Intent i){
   if(i!=null&&ReminderReceiver.OPEN.equals(i.getAction())){
    String k=i.getStringExtra("reminder_kind");
-   if(k!=null&&("daily".equals(k)||"test".equals(k)||k.matches("task:[A-Za-z0-9-]{1,80}")))pendingReminder=k;
-   i.setAction(Intent.ACTION_MAIN);i.removeExtra("reminder_kind");
+   if(k!=null&&("daily".equals(k)||"test".equals(k)||k.matches("task:[A-Za-z0-9-]{1,80}"))){String expected=ReminderReceiver.prefs(this).getString("acceptNonce","");String got=i.getStringExtra("accept_nonce");boolean accepted=!expected.isEmpty()&&expected.equals(got);if(accepted)ReminderReceiver.prefs(this).edit().remove("acceptNonce").commit();pendingReminder=(accepted?"accepted:":"")+k;}
+   i.setAction(Intent.ACTION_MAIN);i.removeExtra("reminder_kind");i.removeExtra("accept_nonce");
   }
  }
  @Override protected void onNewIntent(Intent i){super.onNewIntent(i);setIntent(i);captureReminder(i);if(web!=null)web.evaluateJavascript("window.veraReadReminder && window.veraReadReminder()",null);}
@@ -118,9 +120,13 @@ public class MainActivity extends Activity {
    @JavascriptInterface public String loadVerifiedLogin(){return loadLogin();}
    @JavascriptInterface public boolean clearVerifiedLogin(){return clearLogin();}
    @JavascriptInterface public String reminderStatus(){return reminderState();}
+   @JavascriptInterface public int apkVersion(){return 7;}
+   @JavascriptInterface public void setInCall(boolean on){ReminderReceiver.inCall=on;}
+   @JavascriptInterface public void exportBackup(String data){if(data==null||data.length()>3000000)return;runOnUiThread(()->{pendingBackup=data;try{Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json").putExtra(Intent.EXTRA_TITLE,"VERA-backup.json");startActivityForResult(i,SAVE_BACKUP);}catch(Exception e){pendingBackup=null;Toast.makeText(MainActivity.this,"無法開啟備份儲存器",Toast.LENGTH_LONG).show();}});}
+   @JavascriptInterface public void importBackup(){runOnUiThread(()->{try{Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json");startActivityForResult(i,OPEN_BACKUP);}catch(Exception e){Toast.makeText(MainActivity.this,"無法開啟備份檔案",Toast.LENGTH_LONG).show();}});}
    @JavascriptInterface public boolean configureCalls(String raw){return ReminderReceiver.configureOptions(MainActivity.this,raw);}
    @JavascriptInterface public boolean syncTaskReminders(String raw){return ReminderReceiver.syncTasks(MainActivity.this,raw);}
-   @JavascriptInterface public void clearCallLog(){ReminderReceiver.prefs(MainActivity.this).edit().remove("callLog").remove("firedTasks").apply();}
+   @JavascriptInterface public void clearCallLog(){ReminderReceiver.prefs(MainActivity.this).edit().remove("callLog").apply();}
    @JavascriptInterface public void requestFullscreen(){runOnUiThread(()->{if(Build.VERSION.SDK_INT>=34&&!ReminderReceiver.fullAllowed(MainActivity.this)){try{startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,Uri.parse("package:"+getPackageName())));}catch(Exception e){Toast.makeText(MainActivity.this,"請於系統設定檢查全螢幕通知",Toast.LENGTH_LONG).show();}}});}
    @JavascriptInterface public boolean setSpeaker(boolean on){try{AudioManager am=getSystemService(AudioManager.class);if(am==null)return false;am.setSpeakerphoneOn(on);return true;}catch(Exception e){return false;}}
    @JavascriptInterface public boolean scheduleDaily(int h,int m){return ReminderReceiver.configure(MainActivity.this,h,m);}
@@ -144,6 +150,7 @@ public class MainActivity extends Activity {
   // Ask Android first, outside the asynchronous WebRTC capture request.
   if(!micGranted())web.postDelayed(()->{if(!isFinishing() && !isDestroyed())requestMic();},350);
  }
+ @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request!=SAVE_BACKUP&&request!=OPEN_BACKUP)return;try{if(result!=RESULT_OK||data==null||data.getData()==null)return;Uri u=data.getData();if(request==SAVE_BACKUP){if(pendingBackup==null)throw new java.io.IOException("empty");try(java.io.OutputStream out=getContentResolver().openOutputStream(u,"wt")){if(out==null)throw new java.io.IOException("file");out.write(pendingBackup.getBytes(StandardCharsets.UTF_8));}Toast.makeText(this,"已儲存 VERA 備份檔",Toast.LENGTH_LONG).show();}else{java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();try(java.io.InputStream in=getContentResolver().openInputStream(u)){if(in==null)throw new java.io.IOException("file");byte[] buffer=new byte[8192];int n;while((n=in.read(buffer))!=-1){if(out.size()+n>3000000)throw new java.io.IOException("too large");out.write(buffer,0,n);}}String raw=new String(out.toByteArray(),StandardCharsets.UTF_8);if(web!=null)web.evaluateJavascript("window.veraRestoreBackup && window.veraRestoreBackup("+org.json.JSONObject.quote(raw)+")",null);}}catch(Exception e){Toast.makeText(this,"備份操作失敗，請檢查檔案",Toast.LENGTH_LONG).show();}finally{if(request==SAVE_BACKUP)pendingBackup=null;}}
  @Override public void onRequestPermissionsResult(int r,String[] p,int[] g){
   super.onRequestPermissionsResult(r,p,g);
   if(r==42){if(web!=null)web.evaluateJavascript("window.veraRefreshReminder && window.veraRefreshReminder()",null);return;}
@@ -154,6 +161,6 @@ public class MainActivity extends Activity {
   if(web!=null)web.evaluateJavascript("window.veraPermissionChanged && window.veraPermissionChanged("+(micGranted()?"true":"false")+")",null);
  }
  @Override protected void onResume(){super.onResume();if(web!=null)web.evaluateJavascript("window.veraRefreshReminder && window.veraRefreshReminder(); window.veraReadReminder && window.veraReadReminder()",null);}
- @Override protected void onStop(){super.onStop();if(web!=null&&!requestingMic)web.evaluateJavascript("window.veraBackground && window.veraBackground()",null);}
+ @Override protected void onStop(){super.onStop();ReminderReceiver.inCall=false;if(web!=null&&!requestingMic)web.evaluateJavascript("window.veraBackground && window.veraBackground()",null);}
  @Override protected void onDestroy(){if(pending!=null){pending.deny();pending=null;}if(web!=null){web.removeJavascriptInterface("VeraAndroid");web.destroy();web=null;}super.onDestroy();}
 }

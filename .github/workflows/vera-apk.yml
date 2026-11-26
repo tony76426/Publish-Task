@@ -43,6 +43,12 @@ jobs:
               assert c.post("/api/realtime/call",headers=h,json={"sdp":"v=0\r\n"}).json["sdp"].startswith("v=0")
           with patch("vera_app.requests.post",return_value=Mock(ok=True,**{"json.return_value":{"output":[{"type":"message","content":[{"type":"output_text","text":"test summary"}]}]}})):
               assert c.post("/api/summary",headers=h,json={"transcript":"test"}).json["summary"]=="test summary"
+          assert c.post("/api/assistant/organize",json={"mode":"brief","data":"test"}).status_code==401
+          assert c.post("/api/tasks/revise",headers=h,json={"tasks":[]}).status_code==400
+          with patch("vera_app.requests.post",return_value=Mock(ok=True,**{"json.return_value":{"output":[{"type":"message","content":[{"type":"output_text","text":"brief test"}]}]}})):
+              assert c.post("/api/assistant/organize",headers=h,json={"mode":"brief","data":"test"}).json["text"]=="brief test"
+          from vera_app import session
+          assert session("test",{"voice":"coral","speed":1.15})["audio"]["output"]=={"voice":"coral","speed":1.15}
           print("All mocked backend smoke checks passed.")
           PY
       - name: Validate UI JavaScript syntax
