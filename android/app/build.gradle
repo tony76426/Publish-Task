@@ -2,5 +2,5 @@ plugins { id 'com.android.application' }
 android {
  namespace 'tw.vera.nexus'
  compileSdk 35
- defaultConfig { applicationId 'tw.vera.nexus'; minSdk 26; targetSdk 35; versionCode 4; versionName '0.1.3' }
+ defaultConfig { applicationId 'tw.vera.nexus'; minSdk 26; targetSdk 35; versionCode 5; versionName '0.1.4' }
 }

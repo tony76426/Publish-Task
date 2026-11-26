@@ -26,6 +26,20 @@ public class MainActivity extends Activity {
  private WebView web;
  private PermissionRequest pending;
  private boolean requestingMic=false;
+ private volatile String pendingReminder="";
+ private void captureReminder(Intent i){
+  if(i!=null&&ReminderReceiver.OPEN.equals(i.getAction())){
+   String k=i.getStringExtra("reminder_kind");
+   if("daily".equals(k)||"test".equals(k))pendingReminder=k;
+   i.setAction(Intent.ACTION_MAIN);i.removeExtra("reminder_kind");
+  }
+ }
+ @Override protected void onNewIntent(Intent i){super.onNewIntent(i);setIntent(i);captureReminder(i);if(web!=null)web.evaluateJavascript("window.veraReadReminder && window.veraReadReminder()",null);}
+ private String reminderState(){
+  try{android.content.SharedPreferences p=ReminderReceiver.prefs(this);org.json.JSONObject j=new org.json.JSONObject();
+   j.put("enabled",p.getBoolean("enabled",false));j.put("hour",p.getInt("hour",9));j.put("minute",p.getInt("minute",0));j.put("next",p.getLong("next",0));j.put("notifications",ReminderReceiver.notifyAllowed(this));j.put("exact",ReminderReceiver.exactAllowed(this));return j.toString();
+  }catch(Exception e){return "{}";}
+ }
  private static final String HOST="publish-task.onrender.com";
  private boolean allowed(Uri u){return u!=null && "https".equals(u.getScheme()) && HOST.equals(u.getHost()) && (u.getPort()==-1 || u.getPort()==443);}
  private static final String LOGIN_KEY="vera_nexus_token_v1";
@@ -71,7 +85,7 @@ public class MainActivity extends Activity {
   requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},41);
  }
  @Override public void onCreate(Bundle b){
-  super.onCreate(b);
+  super.onCreate(b);captureReminder(getIntent());ReminderReceiver.channel(this);
   getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
   setVolumeControlStream(AudioManager.STREAM_VOICE_CALL);
   web=new WebView(this); setContentView(web);
@@ -103,6 +117,21 @@ public class MainActivity extends Activity {
    @JavascriptInterface public boolean saveVerifiedLogin(String token){return saveLogin(token);}
    @JavascriptInterface public String loadVerifiedLogin(){return loadLogin();}
    @JavascriptInterface public boolean clearVerifiedLogin(){return clearLogin();}
+   @JavascriptInterface public String reminderStatus(){return reminderState();}
+   @JavascriptInterface public boolean scheduleDaily(int h,int m){return ReminderReceiver.configure(MainActivity.this,h,m);}
+   @JavascriptInterface public boolean scheduleTest(){return ReminderReceiver.schedule(MainActivity.this,true,System.currentTimeMillis()+60000L);}
+   @JavascriptInterface public void cancelDailyReminder(){ReminderReceiver.cancelDaily(MainActivity.this);}
+   @JavascriptInterface public void cancelAllReminders(){ReminderReceiver.cancelAll(MainActivity.this);pendingReminder="";}
+   @JavascriptInterface public String takeReminder(){String k=pendingReminder;pendingReminder="";return k;}
+   @JavascriptInterface public void requestNotifications(){runOnUiThread(()->{
+    if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},42);
+    else {Intent i=new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,getPackageName());startActivity(i);}
+   });}
+   @JavascriptInterface public void requestExactAlarm(){runOnUiThread(()->{
+    if(Build.VERSION.SDK_INT>=31&&!ReminderReceiver.exactAllowed(MainActivity.this)){
+      try{startActivity(new Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+getPackageName())));}catch(Exception e){Toast.makeText(MainActivity.this,"請在系統設定允許鬧鐘與提醒",Toast.LENGTH_LONG).show();}
+    }
+   });}
    @JavascriptInterface public boolean hasMicPermission(){return micGranted();}
    @JavascriptInterface public void askMicPermission(){runOnUiThread(()->requestMic());}
   },"VeraAndroid");
@@ -112,12 +141,14 @@ public class MainActivity extends Activity {
  }
  @Override public void onRequestPermissionsResult(int r,String[] p,int[] g){
   super.onRequestPermissionsResult(r,p,g);
+  if(r==42){if(web!=null)web.evaluateJavascript("window.veraRefreshReminder && window.veraRefreshReminder()",null);return;}
   if(r!=41)return;
   requestingMic=false;
   if(pending!=null){PermissionRequest req=pending;pending=null;
    if(micGranted())req.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});else req.deny();}
   if(web!=null)web.evaluateJavascript("window.veraPermissionChanged && window.veraPermissionChanged("+(micGranted()?"true":"false")+")",null);
  }
+ @Override protected void onResume(){super.onResume();if(web!=null)web.evaluateJavascript("window.veraRefreshReminder && window.veraRefreshReminder(); window.veraReadReminder && window.veraReadReminder()",null);}
  @Override protected void onStop(){super.onStop();if(web!=null&&!requestingMic)web.evaluateJavascript("window.veraBackground && window.veraBackground()",null);}
  @Override protected void onDestroy(){if(pending!=null){pending.deny();pending=null;}if(web!=null){web.removeJavascriptInterface("VeraAndroid");web.destroy();web=null;}super.onDestroy();}
 }
