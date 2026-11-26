@@ -30,14 +30,14 @@ public class MainActivity extends Activity {
  private void captureReminder(Intent i){
   if(i!=null&&ReminderReceiver.OPEN.equals(i.getAction())){
    String k=i.getStringExtra("reminder_kind");
-   if("daily".equals(k)||"test".equals(k))pendingReminder=k;
+   if(k!=null&&("daily".equals(k)||"test".equals(k)||k.matches("task:[A-Za-z0-9-]{1,80}")))pendingReminder=k;
    i.setAction(Intent.ACTION_MAIN);i.removeExtra("reminder_kind");
   }
  }
  @Override protected void onNewIntent(Intent i){super.onNewIntent(i);setIntent(i);captureReminder(i);if(web!=null)web.evaluateJavascript("window.veraReadReminder && window.veraReadReminder()",null);}
  private String reminderState(){
   try{android.content.SharedPreferences p=ReminderReceiver.prefs(this);org.json.JSONObject j=new org.json.JSONObject();
-   j.put("enabled",p.getBoolean("enabled",false));j.put("hour",p.getInt("hour",9));j.put("minute",p.getInt("minute",0));j.put("next",p.getLong("next",0));j.put("notifications",ReminderReceiver.notifyAllowed(this));j.put("exact",ReminderReceiver.exactAllowed(this));return j.toString();
+   j.put("enabled",p.getBoolean("enabled",false));j.put("hour",p.getInt("hour",9));j.put("minute",p.getInt("minute",0));j.put("next",p.getLong("next",0));j.put("notifications",ReminderReceiver.notifyAllowed(this));j.put("exact",ReminderReceiver.exactAllowed(this));j.put("fullAllowed",ReminderReceiver.fullAllowed(this));j.put("fullscreen",p.getBoolean("fullscreen",false));j.put("interval",p.getInt("interval",0));j.put("from",p.getInt("from",0));j.put("to",p.getInt("to",0));j.put("quiet",p.getBoolean("quiet",false));j.put("quietFrom",p.getInt("quietFrom",1320));j.put("quietTo",p.getInt("quietTo",420));j.put("retry",p.getBoolean("retry",false));j.put("tone",p.getString("tone","ring"));j.put("firedTasks",p.getString("firedTasks",""));j.put("log",ReminderReceiver.log(this));return j.toString();
   }catch(Exception e){return "{}";}
  }
  private static final String HOST="publish-task.onrender.com";
@@ -118,6 +118,11 @@ public class MainActivity extends Activity {
    @JavascriptInterface public String loadVerifiedLogin(){return loadLogin();}
    @JavascriptInterface public boolean clearVerifiedLogin(){return clearLogin();}
    @JavascriptInterface public String reminderStatus(){return reminderState();}
+   @JavascriptInterface public boolean configureCalls(String raw){return ReminderReceiver.configureOptions(MainActivity.this,raw);}
+   @JavascriptInterface public boolean syncTaskReminders(String raw){return ReminderReceiver.syncTasks(MainActivity.this,raw);}
+   @JavascriptInterface public void clearCallLog(){ReminderReceiver.prefs(MainActivity.this).edit().remove("callLog").remove("firedTasks").apply();}
+   @JavascriptInterface public void requestFullscreen(){runOnUiThread(()->{if(Build.VERSION.SDK_INT>=34&&!ReminderReceiver.fullAllowed(MainActivity.this)){try{startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,Uri.parse("package:"+getPackageName())));}catch(Exception e){Toast.makeText(MainActivity.this,"請於系統設定檢查全螢幕通知",Toast.LENGTH_LONG).show();}}});}
+   @JavascriptInterface public boolean setSpeaker(boolean on){try{AudioManager am=getSystemService(AudioManager.class);if(am==null)return false;am.setSpeakerphoneOn(on);return true;}catch(Exception e){return false;}}
    @JavascriptInterface public boolean scheduleDaily(int h,int m){return ReminderReceiver.configure(MainActivity.this,h,m);}
    @JavascriptInterface public boolean scheduleTest(){return ReminderReceiver.schedule(MainActivity.this,true,System.currentTimeMillis()+60000L);}
    @JavascriptInterface public void cancelDailyReminder(){ReminderReceiver.cancelDaily(MainActivity.this);}

@@ -83,5 +83,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="vera-nexus-v0.1.5-${GITHUB_RUN_NUMBER}"
-          gh release create "$tag" VERA-Nexus.apk VERA-Nexus.apk.sha256 --target "$GITHUB_SHA" --prerelease --title "VERA Nexus 0.1.5 original workspace" --notes "Independent VERA voice-first workspace, editable task cards and private notes; native scheduled notifications, memory and encrypted login retained. Requires private VERA_ACCESS_TOKEN. No Firebase or PSTN calling; reminders depend on Android permissions. Gmail automation and cloud memory not yet enabled. Debug signature; not for production distribution."
+          tag="vera-nexus-v0.1.6-${GITHUB_RUN_NUMBER}"
+          gh release create "$tag" VERA-Nexus.apk VERA-Nexus.apk.sha256 --target "$GITHUB_SHA" --prerelease --title "VERA Nexus 0.1.6 integrated assistant" --notes "Native incoming-call notifications, opt-in fullscreen, quiet hours, retry, call history and task alarms; voice and memory controls; original workspace retained. Requires private VERA_ACCESS_TOKEN. No Firebase or PSTN calling; reminders depend on Android permissions. Gmail automation and cloud memory not yet enabled. Debug signature; not for production distribution."

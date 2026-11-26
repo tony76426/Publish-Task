@@ -1,93 +1,60 @@
 package tw.vera.nexus;
-
-import android.app.AlarmManager;
-import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
-import android.content.BroadcastReceiver;
-import android.content.Context;
-import android.content.Intent;
-import android.content.SharedPreferences;
+import android.app.*;
+import android.content.*;
 import android.content.pm.PackageManager;
-import android.media.AudioAttributes;
-import android.media.RingtoneManager;
-import android.os.Build;
-import java.util.Calendar;
+import android.media.*;
+import android.os.*;
+import org.json.*;
+import java.util.*;
 
 public final class ReminderReceiver extends BroadcastReceiver {
- static final String CHANNEL="vera_scheduled_calls_v1";
- static final String PREFS="vera_reminders";
- static final String DAILY="tw.vera.nexus.DAILY";
- static final String TEST="tw.vera.nexus.TEST";
- static final String OPEN="tw.vera.nexus.OPEN_REMINDER";
- static final int DAILY_ID=801, TEST_ID=802;
+ static final String PREFS="vera_reminders", DAILY="tw.vera.nexus.DAILY", TEST="tw.vera.nexus.TEST", RETRY="tw.vera.nexus.RETRY", TIMEOUT="tw.vera.nexus.TIMEOUT", DECLINE="tw.vera.nexus.DECLINE", TASK="tw.vera.nexus.TASK", OPEN="tw.vera.nexus.OPEN_REMINDER";
+ static final int ID=801;
+ static final long RING_MS=45000L;
  static SharedPreferences prefs(Context c){return c.getSharedPreferences(PREFS,Context.MODE_PRIVATE);}
- static boolean notifyAllowed(Context c){
-  NotificationManager n=c.getSystemService(NotificationManager.class);
-  if(n==null||!n.areNotificationsEnabled())return false;
-  if(Build.VERSION.SDK_INT>=33&&c.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return false;
-  NotificationChannel ch=n.getNotificationChannel(CHANNEL);
-  return ch==null||ch.getImportance()!=NotificationManager.IMPORTANCE_NONE;
+ static String channelId(Context c){return "vera_calls_v2_"+prefs(c).getString("tone","ring");}
+ static void channel(Context c){NotificationManager nm=c.getSystemService(NotificationManager.class);if(nm==null)return;
+  String tone=prefs(c).getString("tone","ring");NotificationChannel ch=new NotificationChannel(channelId(c),"VERA 主動聯繫 · "+("silent".equals(tone)?"僅震動":"soft".equals(tone)?"通知音":"來電鈴聲"),NotificationManager.IMPORTANCE_HIGH);
+  ch.setDescription("使用者設定的 AI 語音聯繫提醒");ch.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);ch.enableVibration(true);ch.setVibrationPattern(new long[]{0,700,500,700,500,700,500,700,500,700,500,700});
+  ch.setSound("silent".equals(tone)?null:RingtoneManager.getDefaultUri("soft".equals(tone)?RingtoneManager.TYPE_NOTIFICATION:RingtoneManager.TYPE_RINGTONE),new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build());nm.createNotificationChannel(ch);
  }
+ static boolean notifyAllowed(Context c){NotificationManager n=c.getSystemService(NotificationManager.class);if(n==null||!n.areNotificationsEnabled())return false;if(Build.VERSION.SDK_INT>=33&&c.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return false;NotificationChannel ch=n.getNotificationChannel(channelId(c));return ch==null||ch.getImportance()!=NotificationManager.IMPORTANCE_NONE;}
+ static boolean fullAllowed(Context c){NotificationManager n=c.getSystemService(NotificationManager.class);return n!=null&&(Build.VERSION.SDK_INT<34||n.canUseFullScreenIntent());}
  static boolean exactAllowed(Context c){AlarmManager a=c.getSystemService(AlarmManager.class);return a!=null&&(Build.VERSION.SDK_INT<31||a.canScheduleExactAlarms());}
- static void channel(Context c){
-  NotificationManager n=c.getSystemService(NotificationManager.class);
-  if(n==null)return;
-  NotificationChannel ch=new NotificationChannel(CHANNEL,"VERA 主動聯繫提醒",NotificationManager.IMPORTANCE_HIGH);
-  ch.setDescription("每日工作報告與測試來電提醒");ch.enableVibration(true);
-  ch.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
-  ch.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build());
-  n.createNotificationChannel(ch);
+ static int code(String a){return DAILY.equals(a)?801:TEST.equals(a)?802:RETRY.equals(a)?803:TIMEOUT.equals(a)?804:DECLINE.equals(a)?805:806;}
+ static PendingIntent alarmIntent(Context c,String a){return PendingIntent.getBroadcast(c,code(a),new Intent(c,ReminderReceiver.class).setAction(a),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);}
+ static boolean schedule(Context c,String a,long when){AlarmManager am=c.getSystemService(AlarmManager.class);if(am==null)return false;PendingIntent p=alarmIntent(c,a);try{if(exactAllowed(c))am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,when,p);else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,when,p);return true;}catch(RuntimeException e){try{am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,when,p);return true;}catch(RuntimeException ignored){return false;}}}
+ static boolean schedule(Context c,boolean test,long when){return schedule(c,test?TEST:DAILY,when);}
+ static void cancel(Context c,String a){AlarmManager am=c.getSystemService(AlarmManager.class);if(am!=null)am.cancel(alarmIntent(c,a));}
+ static boolean inWindow(int m,int from,int to){return from==to|| (from<to?m>=from&&m<to:m>=from||m<to);}
+ static int minuteAt(long at){Calendar x=Calendar.getInstance();x.setTimeInMillis(at);return x.get(Calendar.HOUR_OF_DAY)*60+x.get(Calendar.MINUTE);}
+ static boolean allowedTime(Context c,long at){SharedPreferences p=prefs(c);int m=minuteAt(at);return inWindow(m,p.getInt("from",0),p.getInt("to",0))&&(!p.getBoolean("quiet",false)||!inWindow(m,p.getInt("quietFrom",1320),p.getInt("quietTo",420)));}
+ static long next(Context c,long after){SharedPreferences p=prefs(c);int first=p.getInt("hour",9)*60+p.getInt("minute",0);int interval=p.getInt("interval",0);Calendar midnight=Calendar.getInstance();midnight.setTimeInMillis(after);midnight.set(Calendar.HOUR_OF_DAY,0);midnight.set(Calendar.MINUTE,0);midnight.set(Calendar.SECOND,0);midnight.set(Calendar.MILLISECOND,0);long best=Long.MAX_VALUE;for(int d=0;d<8;d++){Calendar day=(Calendar)midnight.clone();day.add(Calendar.DAY_OF_YEAR,d);for(int m=first;m<1440;m+=interval>0?interval*60:1440){Calendar x=(Calendar)day.clone();x.set(Calendar.HOUR_OF_DAY,m/60);x.set(Calendar.MINUTE,m%60);long at=x.getTimeInMillis();if(at>after&&allowedTime(c,at))best=Math.min(best,at);}}return best==Long.MAX_VALUE?0:best;}
+ static boolean reschedule(Context c){SharedPreferences p=prefs(c);cancel(c,DAILY);if(!p.getBoolean("enabled",false))return false;long when=next(c,System.currentTimeMillis());p.edit().putLong("next",when).commit();return when>0&&schedule(c,DAILY,when);}
+ static boolean configure(Context c,int hour,int minute){if(hour<0||hour>23||minute<0||minute>59)return false;channel(c);prefs(c).edit().putBoolean("enabled",true).putInt("hour",hour).putInt("minute",minute).commit();boolean ok=reschedule(c);if(!ok)cancelDaily(c);return ok;}
+ static boolean configureOptions(Context c,String raw){try{JSONObject j=new JSONObject(raw);int interval=j.optInt("interval",0),from=j.optInt("from",0),to=j.optInt("to",0),qf=j.optInt("quietFrom",1320),qt=j.optInt("quietTo",420);if((interval!=0&&interval!=6&&interval!=8)||from<0||from>1439||to<0||to>1439||qf<0||qf>1439||qt<0||qt>1439)return false;String tone=j.optString("tone","ring");if(!Arrays.asList("ring","soft","silent").contains(tone))return false;prefs(c).edit().putInt("interval",interval).putInt("from",from).putInt("to",to).putBoolean("quiet",j.optBoolean("quiet",false)).putInt("quietFrom",qf).putInt("quietTo",qt).putBoolean("retry",j.optBoolean("retry",false)).putBoolean("fullscreen",j.optBoolean("fullscreen",false)).putString("tone",tone).commit();channel(c);if(prefs(c).getBoolean("enabled",false)&&!reschedule(c)){cancelDaily(c);return false;}return true;}catch(Exception e){return false;}}
+ static void cancelDaily(Context c){prefs(c).edit().putBoolean("enabled",false).remove("next").commit();cancel(c,DAILY);cancel(c,RETRY);}
+ static synchronized void cancelAll(Context c){cancelDaily(c);for(String a:new String[]{TEST,RETRY,TIMEOUT,TASK})cancel(c,a);prefs(c).edit().remove("active").remove("taskQueue").remove("retryKind").remove("retryAt").commit();NotificationManager n=c.getSystemService(NotificationManager.class);if(n!=null)n.cancel(ID);}
+ static synchronized JSONArray log(Context c){try{return new JSONArray(prefs(c).getString("callLog","[]"));}catch(Exception e){return new JSONArray();}}
+ static void record(Context c,String kind,String state,long at){try{JSONArray old=log(c),a=new JSONArray();a.put(new JSONObject().put("kind",kind).put("state",state).put("at",at));for(int i=0;i<Math.min(99,old.length());i++)a.put(old.get(i));prefs(c).edit().putString("callLog",a.toString()).commit();}catch(Exception ignored){}}
+ static boolean active(Context c,long id){return id>0&&prefs(c).getLong("active",0)==id&&System.currentTimeMillis()<id+RING_MS;}
+ static synchronized void finishCall(Context c,long id,String state){SharedPreferences p=prefs(c);if(id<=0||p.getLong("active",0)!=id)return;String kind=p.getString("activeKind","daily");boolean retry=p.getBoolean("activeRetry",false);p.edit().remove("active").remove("activeKind").remove("activeRetry").commit();cancel(c,TIMEOUT);NotificationManager n=c.getSystemService(NotificationManager.class);if(n!=null)n.cancel(ID);record(c,kind,state,id);if("missed".equals(state)&&!retry&&!kind.equals("test")&&p.getBoolean("retry",false)){long at=System.currentTimeMillis()+300000L;if(allowedTime(c,at)){p.edit().putString("retryKind",kind).putLong("retryAt",at).commit();schedule(c,RETRY,at);}}}
+ static synchronized boolean syncTasks(Context c,String raw){try{JSONArray a=new JSONArray(raw),clean=new JSONArray();for(int i=0;i<Math.min(200,a.length());i++){JSONObject j=a.getJSONObject(i);String id=j.optString("id");long at=j.optLong("at");if(id.matches("[A-Za-z0-9-]{1,80}")&&at>0)clean.put(new JSONObject().put("id",id).put("at",at));}prefs(c).edit().putString("taskQueue",clean.toString()).commit();scheduleTask(c);return true;}catch(Exception e){return false;}}
+ static void scheduleTask(Context c){cancel(c,TASK);try{JSONArray a=new JSONArray(prefs(c).getString("taskQueue","[]"));long best=Long.MAX_VALUE;for(int i=0;i<a.length();i++)best=Math.min(best,a.getJSONObject(i).getLong("at"));if(best<Long.MAX_VALUE)schedule(c,TASK,Math.max(System.currentTimeMillis()+1000,best));}catch(Exception ignored){}}
+ static String takeTask(Context c){try{JSONArray a=new JSONArray(prefs(c).getString("taskQueue","[]")),rest=new JSONArray();JSONObject pick=null;long now=System.currentTimeMillis();for(int i=0;i<a.length();i++){JSONObject j=a.getJSONObject(i);if(j.getLong("at")<=now&&(pick==null||j.getLong("at")<pick.getLong("at")))pick=j;}for(int i=0;i<a.length();i++){JSONObject j=a.getJSONObject(i);if(pick==null||!pick.getString("id").equals(j.getString("id")))rest.put(j);}prefs(c).edit().putString("taskQueue",rest.toString()).commit();if(pick!=null){String id=pick.getString("id");String done=prefs(c).getString("firedTasks","");prefs(c).edit().putString("firedTasks",(done+"|"+id).substring(Math.max(0,done.length()+1+id.length()-20000))).commit();return "task:"+id;}}catch(Exception ignored){}return "";}
+ static synchronized void ring(Context c,String kind,boolean retry){SharedPreferences p=prefs(c);long old=p.getLong("active",0);if(old>0){if(active(c,old)){record(c,kind,"busy",System.currentTimeMillis());return;}finishCall(c,old,"missed");}long now=System.currentTimeMillis();if(!allowedTime(c,now)){record(c,kind,"quiet",now);return;}channel(c);if(!notifyAllowed(c)){record(c,kind,"blocked",now);return;}p.edit().putLong("active",now).putString("activeKind",kind).putBoolean("activeRetry",retry).commit();
+ Intent i=new Intent(c,IncomingActivity.class).putExtra("id",now);PendingIntent open=PendingIntent.getActivity(c,901,i,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);Intent decline=new Intent(c,ReminderReceiver.class).setAction(DECLINE).putExtra("id",now);PendingIntent no=PendingIntent.getBroadcast(c,902,decline,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+ Notification.Builder b=new Notification.Builder(c,channelId(c)).setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("VERA 主動聯繫").setContentText("test".equals(kind)?"測試來電":"你的 AI 秘書有事項需要討論").setVisibility(Notification.VISIBILITY_PRIVATE).setCategory(Notification.CATEGORY_CALL).setContentIntent(open).setDeleteIntent(no).setOngoing(true).setTimeoutAfter(RING_MS).addAction(new Notification.Action.Builder(null,"接聽畫面",open).build()).addAction(new Notification.Action.Builder(null,"拒絕",no).build());
+ if(p.getBoolean("fullscreen",false)&&fullAllowed(c))b.setFullScreenIntent(open,true);
+ Notification n=b.build();n.flags|=Notification.FLAG_INSISTENT;NotificationManager nm=c.getSystemService(NotificationManager.class);if(nm!=null)nm.notify(ID,n);schedule(c,TIMEOUT,now+RING_MS+1000);
  }
- static PendingIntent alarmIntent(Context c,boolean test){
-  Intent i=new Intent(c,ReminderReceiver.class).setAction(test?TEST:DAILY);
-  return PendingIntent.getBroadcast(c,test?TEST_ID:DAILY_ID,i,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
- }
- static boolean schedule(Context c,boolean test,long when){
-  AlarmManager a=c.getSystemService(AlarmManager.class);if(a==null)return false;
-  PendingIntent p=alarmIntent(c,test);
-  try{if(exactAllowed(c)){a.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,when,p);}else{a.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,when,p);}return true;}
-  catch(SecurityException ex){try{a.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,when,p);return true;}catch(RuntimeException e){return false;}}
-  catch(RuntimeException ex){return false;}
- }
- static long nextDaily(int hour,int minute){
-  Calendar x=Calendar.getInstance();x.set(Calendar.HOUR_OF_DAY,hour);x.set(Calendar.MINUTE,minute);x.set(Calendar.SECOND,0);x.set(Calendar.MILLISECOND,0);
-  if(x.getTimeInMillis()<=System.currentTimeMillis())x.add(Calendar.DAY_OF_YEAR,1);
-  return x.getTimeInMillis();
- }
- static boolean configure(Context c,int hour,int minute){
-  if(hour<0||hour>23||minute<0||minute>59)return false;
-  channel(c);long when=nextDaily(hour,minute);
-  if(!prefs(c).edit().putBoolean("enabled",true).putInt("hour",hour).putInt("minute",minute).putLong("next",when).commit())return false;
-  if(schedule(c,false,when))return true;
-  cancelDaily(c);return false;
- }
- static void cancelDaily(Context c){
-  prefs(c).edit().putBoolean("enabled",false).remove("next").commit();
-  AlarmManager a=c.getSystemService(AlarmManager.class);if(a!=null)a.cancel(alarmIntent(c,false));
-  NotificationManager n=c.getSystemService(NotificationManager.class);if(n!=null)n.cancel(DAILY_ID);
- }
- static void cancelAll(Context c){
-  cancelDaily(c);AlarmManager a=c.getSystemService(AlarmManager.class);if(a!=null)a.cancel(alarmIntent(c,true));
-  NotificationManager n=c.getSystemService(NotificationManager.class);if(n!=null)n.cancel(TEST_ID);
- }
- @Override public void onReceive(Context c,Intent i){
-  String action=i.getAction();if(action==null)return;
-  if(Intent.ACTION_BOOT_COMPLETED.equals(action)||Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)||Intent.ACTION_TIME_CHANGED.equals(action)||Intent.ACTION_TIMEZONE_CHANGED.equals(action)||AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED.equals(action)){
-   SharedPreferences p=prefs(c);if(p.getBoolean("enabled",false))configure(c,p.getInt("hour",9),p.getInt("minute",0));return;
-  }
-  boolean test=TEST.equals(action);if(!test&&!DAILY.equals(action))return;
-  SharedPreferences p=prefs(c);
-  if(!test){if(!p.getBoolean("enabled",false))return;configure(c,p.getInt("hour",9),p.getInt("minute",0));}
-  channel(c);if(!notifyAllowed(c))return;
-  int id=test?TEST_ID:DAILY_ID;
-  Intent open=new Intent(c,MainActivity.class).setAction(OPEN).putExtra("reminder_kind",test?"test":"daily").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
-  PendingIntent tap=PendingIntent.getActivity(c,id,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-  Notification n=new Notification.Builder(c,CHANNEL).setSmallIcon(android.R.drawable.ic_dialog_info)
-   .setContentTitle("VERA 主動聯繫").setContentText(test?"測試提醒：點擊進入接聽畫面":"每日工作彙報：點擊進入接聽畫面")
-   .setCategory(Notification.CATEGORY_REMINDER).setVisibility(Notification.VISIBILITY_PRIVATE).setAutoCancel(true)
-   .setContentIntent(tap).addAction(new Notification.Action.Builder(null,"開啟接聽畫面",tap).build()).build();
-  NotificationManager nm=c.getSystemService(NotificationManager.class);if(nm!=null)nm.notify(id,n);
+ @Override public void onReceive(Context c,Intent i){String a=i.getAction();if(a==null)return;SharedPreferences p=prefs(c);
+ if(Intent.ACTION_BOOT_COMPLETED.equals(a)||Intent.ACTION_MY_PACKAGE_REPLACED.equals(a)||Intent.ACTION_TIME_CHANGED.equals(a)||Intent.ACTION_TIMEZONE_CHANGED.equals(a)||AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED.equals(a)){if(p.getBoolean("enabled",false))reschedule(c);scheduleTask(c);return;}
+ if(DECLINE.equals(a)){finishCall(c,i.getLongExtra("id",0),"declined");return;}
+ if(TIMEOUT.equals(a)){long id=p.getLong("active",0);if(id>0&&!active(c,id))finishCall(c,id,"missed");return;}
+ if(DAILY.equals(a)){if(!p.getBoolean("enabled",false))return;reschedule(c);ring(c,"daily",false);return;}
+ if(TEST.equals(a)){ring(c,"test",false);return;}
+ if(RETRY.equals(a)){String k=p.getString("retryKind","");p.edit().remove("retryKind").remove("retryAt").commit();if(!k.isEmpty())ring(c,k,true);return;}
+ if(TASK.equals(a)){String k=takeTask(c);scheduleTask(c);if(!k.isEmpty())ring(c,k,false);}
  }
 }
