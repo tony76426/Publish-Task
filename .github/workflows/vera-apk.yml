@@ -5,6 +5,9 @@ on:
     paths:
       - 'android/**'
       - 'vera_app.py'
+      - 'vera_push.py'
+      - 'test_vera_push.py'
+      - 'requirements-vera.txt'
       - 'vera_ui.html'
       - '.github/workflows/vera-apk.yml'
   workflow_dispatch:
@@ -25,7 +28,8 @@ jobs:
       - name: Backend smoke checks (mocked credentials)
         run: |
           pip install -r requirements-vera.txt
-          python -m py_compile vera_app.py app.py
+          python -m py_compile vera_app.py vera_push.py app.py
+          python -m unittest -v test_vera_push
           python - <<'PY'
           import os
           from unittest.mock import patch, Mock
@@ -74,8 +78,16 @@ jobs:
           test -x "$SDKMANAGER"
           "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
       - name: Build APK
+        env:
+          VERA_FIREBASE_ANDROID_CONFIG: ${{ vars.VERA_FIREBASE_ANDROID_CONFIG }}
         working-directory: android
-        run: gradle --no-daemon :app:assembleDebug
+        run: |
+          if [[ -n "$VERA_FIREBASE_ANDROID_CONFIG" ]]; then
+            printf '%s' "$VERA_FIREBASE_ANDROID_CONFIG" > app/google-services.json
+          else
+            echo '::notice::Android Firebase config unavailable; the build supports local reminders only.'
+          fi
+          gradle --no-daemon :app:assembleDebug
       - name: Verify APK signature
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose android/app/build/outputs/apk/debug/app-debug.apk
@@ -91,5 +103,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="vera-nexus-v0.1.6-${GITHUB_RUN_NUMBER}"
-          gh release create "$tag" VERA-Nexus.apk VERA-Nexus.apk.sha256 --target "$GITHUB_SHA" --prerelease --title "VERA Nexus 0.1.6 integrated assistant" --notes "Native incoming-call notifications, opt-in fullscreen, quiet hours, retry, call history and task alarms; voice and memory controls; original workspace retained. Requires private VERA_ACCESS_TOKEN. No Firebase or PSTN calling; reminders depend on Android permissions. Gmail automation and cloud memory not yet enabled. Debug signature; not for production distribution."
+          tag="vera-nexus-v0.2.0-fcm-${GITHUB_RUN_NUMBER}"
+          if [[ -s android/app/google-services.json ]]; then
+            push_note="Firebase client config embedded. Live push additionally requires Render credentials and on-device opt-in."
+          else
+            push_note="Firebase client config absent. This build supports local reminders only."
+          fi
+          gh release create "$tag" VERA-Nexus.apk VERA-Nexus.apk.sha256 --target "$GITHUB_SHA" --prerelease --title "VERA Nexus 0.2.0 Firebase test build" --notes "$push_note Requires private VERA_ACCESS_TOKEN. Android permissions apply. Debug signature; not for production distribution."

@@ -32,7 +32,7 @@ public class MainActivity extends Activity {
  private void captureReminder(Intent i){
   if(i!=null&&ReminderReceiver.OPEN.equals(i.getAction())){
    String k=i.getStringExtra("reminder_kind");
-   if(k!=null&&("daily".equals(k)||"test".equals(k)||k.matches("task:[A-Za-z0-9-]{1,80}"))){String expected=ReminderReceiver.prefs(this).getString("acceptNonce","");String got=i.getStringExtra("accept_nonce");boolean accepted=!expected.isEmpty()&&expected.equals(got);if(accepted)ReminderReceiver.prefs(this).edit().remove("acceptNonce").commit();pendingReminder=(accepted?"accepted:":"")+k;}
+   if(k!=null&&("daily".equals(k)||"test".equals(k)||"remote".equals(k)||"remote-test".equals(k)||k.matches("task:[A-Za-z0-9-]{1,80}"))){String expected=ReminderReceiver.prefs(this).getString("acceptNonce","");String got=i.getStringExtra("accept_nonce");boolean accepted=!expected.isEmpty()&&expected.equals(got);if(accepted)ReminderReceiver.prefs(this).edit().remove("acceptNonce").commit();pendingReminder=(accepted?"accepted:":"")+k;}
    i.setAction(Intent.ACTION_MAIN);i.removeExtra("reminder_kind");i.removeExtra("accept_nonce");
   }
  }
@@ -45,7 +45,7 @@ public class MainActivity extends Activity {
  private static final String HOST="publish-task.onrender.com";
  private boolean allowed(Uri u){return u!=null && "https".equals(u.getScheme()) && HOST.equals(u.getHost()) && (u.getPort()==-1 || u.getPort()==443);}
  private static final String LOGIN_KEY="vera_nexus_token_v1";
- private SecretKey loginKey(boolean create) throws Exception{
+ private static SecretKey loginKey(boolean create) throws Exception{
   KeyStore ks=KeyStore.getInstance("AndroidKeyStore");ks.load(null);
   if(ks.containsAlias(LOGIN_KEY))return (SecretKey)ks.getKey(LOGIN_KEY,null);
   if(!create)return null;
@@ -65,9 +65,9 @@ public class MainActivity extends Activity {
      .putString("ciphertext",Base64.encodeToString(encrypted,Base64.NO_WRAP)).commit();
   }catch(Exception e){return false;}
  }
- private synchronized String loadLogin(){
+ static String loadLogin(android.content.Context context){
   try{
-   android.content.SharedPreferences p=getSharedPreferences("vera_secure_login",MODE_PRIVATE);
+   android.content.SharedPreferences p=context.getSharedPreferences("vera_secure_login",MODE_PRIVATE);
    String iv=p.getString("iv",null),enc=p.getString("ciphertext",null);
    if(iv==null||enc==null)return "";
    SecretKey key=loginKey(false);if(key==null)return "";
@@ -116,11 +116,19 @@ public class MainActivity extends Activity {
   });
   web.addJavascriptInterface(new Object(){
    @JavascriptInterface public void share(String t){if(t==null||t.length()>100000)return;runOnUiThread(()->{Intent i=new Intent(Intent.ACTION_SEND);i.setType("text/plain");i.putExtra(Intent.EXTRA_TEXT,t);startActivity(Intent.createChooser(i,"分享 VERA 摘要"));});}
-   @JavascriptInterface public boolean saveVerifiedLogin(String token){return saveLogin(token);}
-   @JavascriptInterface public String loadVerifiedLogin(){return loadLogin();}
-   @JavascriptInterface public boolean clearVerifiedLogin(){return clearLogin();}
+   @JavascriptInterface public boolean saveVerifiedLogin(String token){boolean saved=saveLogin(token);if(saved)PushEnrollment.refresh(MainActivity.this);return saved;}
+   @JavascriptInterface public String loadVerifiedLogin(){return loadLogin(MainActivity.this);}
+   @JavascriptInterface public boolean clearVerifiedLogin(){
+    boolean revoked=PushEnrollment.disable(MainActivity.this,loadLogin(MainActivity.this),false);
+    return clearLogin()&&revoked;
+   }
+   @JavascriptInterface public void testPush(){runOnUiThread(()->PushEnrollment.test(MainActivity.this));}
+   @JavascriptInterface public void disablePush(){runOnUiThread(()->{
+    if(!PushEnrollment.disable(MainActivity.this,loadLogin(MainActivity.this),true))
+     Toast.makeText(MainActivity.this,"無法儲存推播停用設定",Toast.LENGTH_LONG).show();
+   });}
    @JavascriptInterface public String reminderStatus(){return reminderState();}
-   @JavascriptInterface public int apkVersion(){return 7;}
+   @JavascriptInterface public int apkVersion(){return 8;}
    @JavascriptInterface public void setInCall(boolean on){ReminderReceiver.inCall=on;}
    @JavascriptInterface public void exportBackup(String data){if(data==null||data.length()>3000000)return;runOnUiThread(()->{pendingBackup=data;try{Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json").putExtra(Intent.EXTRA_TITLE,"VERA-backup.json");startActivityForResult(i,SAVE_BACKUP);}catch(Exception e){pendingBackup=null;Toast.makeText(MainActivity.this,"無法開啟備份儲存器",Toast.LENGTH_LONG).show();}});}
    @JavascriptInterface public void importBackup(){runOnUiThread(()->{try{Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json");startActivityForResult(i,OPEN_BACKUP);}catch(Exception e){Toast.makeText(MainActivity.this,"無法開啟備份檔案",Toast.LENGTH_LONG).show();}});}
@@ -160,7 +168,7 @@ public class MainActivity extends Activity {
    if(micGranted())req.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});else req.deny();}
   if(web!=null)web.evaluateJavascript("window.veraPermissionChanged && window.veraPermissionChanged("+(micGranted()?"true":"false")+")",null);
  }
- @Override protected void onResume(){super.onResume();if(web!=null)web.evaluateJavascript("window.veraRefreshReminder && window.veraRefreshReminder(); window.veraReadReminder && window.veraReadReminder()",null);}
+ @Override protected void onResume(){super.onResume();PushEnrollment.refresh(this);if(web!=null)web.evaluateJavascript("window.veraRefreshReminder && window.veraRefreshReminder(); window.veraReadReminder && window.veraReadReminder()",null);}
  @Override protected void onStop(){super.onStop();ReminderReceiver.inCall=false;if(web!=null&&!requestingMic)web.evaluateJavascript("window.veraBackground && window.veraBackground()",null);}
  @Override protected void onDestroy(){if(pending!=null){pending.deny();pending=null;}if(web!=null){web.removeJavascriptInterface("VeraAndroid");web.destroy();web=null;}super.onDestroy();}
 }

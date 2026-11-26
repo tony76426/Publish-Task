@@ -1,6 +1,22 @@
 plugins { id 'com.android.application' }
+
+def firebaseConfig = file('google-services.json')
+if (firebaseConfig.isFile()) {
+    def config = new groovy.json.JsonSlurper().parse(firebaseConfig)
+    if (config.project_info?.project_id != 'vera-nexus-e5119' ||
+        !config.client?.any { it.client_info?.android_client_info?.package_name == 'tw.vera.nexus' &&
+                             it.client_info?.mobilesdk_app_id == '1:1041608787597:android:e26a9db3e9039b2cd244c4' }) {
+        throw new GradleException('Use the Android client config for VERA Nexus (vera-nexus-e5119).')
+    }
+    apply plugin: 'com.google.gms.google-services'
+}
 android {
  namespace 'tw.vera.nexus'
  compileSdk 35
- defaultConfig { applicationId 'tw.vera.nexus'; minSdk 26; targetSdk 35; versionCode 7; versionName '0.1.6' }
+ defaultConfig { applicationId 'tw.vera.nexus'; minSdk 26; targetSdk 35; versionCode 8; versionName '0.2.0' }
+}
+
+dependencies {
+    implementation platform('com.google.firebase:firebase-bom:33.16.0')
+    implementation 'com.google.firebase:firebase-messaging'
 }

@@ -8,6 +8,7 @@ from threading import Lock
 from pathlib import Path
 import requests
 from flask import Flask, jsonify, request, send_file
+from vera_push import install_push_routes
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 256 * 1024
@@ -47,6 +48,8 @@ def guard():
 def headers():
     return {"Authorization": "Bearer " + os.getenv("OPENAI_API_KEY", ""), "OpenAI-Safety-Identifier": hashlib.sha256(os.getenv("VERA_ACCESS_TOKEN","").encode()).hexdigest()}
 
+install_push_routes(app, guard, throttle)
+
 def session(topic="", profile=None):
     profile = profile if isinstance(profile, dict) else {}
     style = {"concise":"簡潔直接","warm":"溫暖自然","professional":"正式專業"}.get(str(profile.get("style","concise")), "簡潔直接")
@@ -72,7 +75,7 @@ def upstream_error(r):
 @app.get("/")
 @app.get("/health")
 def health():
-    return jsonify(service="VERA Nexus", status="ok", version="0.1.6")
+    return jsonify(service="VERA Nexus", status="ok", version="0.2.0", push_api=True)
 
 @app.get("/app")
 def ui():
