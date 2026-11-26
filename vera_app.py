@@ -68,7 +68,7 @@ def upstream_error(r):
 @app.get("/")
 @app.get("/health")
 def health():
-    return jsonify(service="VERA Nexus", status="ok", version="0.1.4")
+    return jsonify(service="VERA Nexus", status="ok", version="0.1.5")
 
 @app.get("/app")
 def ui():
