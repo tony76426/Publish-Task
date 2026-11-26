@@ -7,6 +7,10 @@ on:
       - 'vera_app.py'
       - 'vera_push.py'
       - 'test_vera_push.py'
+      - 'vera_cloud.py'
+      - 'vera_cloud_ui.js'
+      - 'test_vera_cloud.py'
+      - 'gunicorn.conf.py'
       - 'requirements-vera.txt'
       - 'vera_ui.html'
       - '.github/workflows/vera-apk.yml'
@@ -28,8 +32,8 @@ jobs:
       - name: Backend smoke checks (mocked credentials)
         run: |
           pip install -r requirements-vera.txt
-          python -m py_compile vera_app.py vera_push.py app.py
-          python -m unittest -v test_vera_push
+          python -m py_compile vera_app.py vera_push.py vera_cloud.py gunicorn.conf.py app.py
+          python -m unittest -v test_vera_push test_vera_cloud
           python - <<'PY'
           import os
           from unittest.mock import patch, Mock
@@ -65,6 +69,7 @@ jobs:
           Path("/tmp/vera.js").write_text(s.split("<script>",1)[1].split("</script>",1)[0])
           PY
           node --check /tmp/vera.js
+          node --check vera_cloud_ui.js
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -103,10 +108,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="vera-nexus-v0.2.0-fcm-${GITHUB_RUN_NUMBER}"
+          tag="vera-nexus-v0.2.1-fcm-${GITHUB_RUN_NUMBER}-r${GITHUB_RUN_ATTEMPT}"
           if [[ -s android/app/google-services.json ]]; then
             push_note="Firebase client config embedded. Live push additionally requires Render credentials and on-device opt-in."
           else
             push_note="Firebase client config absent. This build supports local reminders only."
           fi
-          gh release create "$tag" VERA-Nexus.apk VERA-Nexus.apk.sha256 --target "$GITHUB_SHA" --prerelease --title "VERA Nexus 0.2.0 Firebase test build" --notes "$push_note Requires private VERA_ACCESS_TOKEN. Android permissions apply. Debug signature; not for production distribution."
+          gh release create "$tag" VERA-Nexus.apk VERA-Nexus.apk.sha256 --target "$GITHUB_SHA" --prerelease --title "VERA Nexus 0.2.1 cloud-call test build" --notes "$push_note Includes Cloud Connection Center, call scheduling and status receipts. Requires private VERA_ACCESS_TOKEN. Debug signature; not for production distribution."

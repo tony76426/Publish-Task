@@ -14,6 +14,7 @@ from uuid import UUID
 from flask import jsonify, request
 
 PROJECT_ID = "vera-nexus-e5119"
+RENDER_CREDENTIAL_FILE = "/etc/secrets/vera-firebase.json"
 DEVICE_LIFETIME = 30 * 24 * 60 * 60
 EVENT_LIFETIME = 24 * 60 * 60
 FCM_TTL = 45
@@ -29,8 +30,7 @@ class DeviceUnregistered(Exception):
 
 
 def credentials_configured():
-    path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-    return bool(path and Path(path).is_file())
+    return Path(os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or RENDER_CREDENTIAL_FILE).is_file()
 
 
 def send_fcm(token, data):
@@ -43,7 +43,9 @@ def send_fcm(token, data):
         try:
             app = firebase_admin.get_app()
         except ValueError:
-            app = firebase_admin.initialize_app(options={"projectId": PROJECT_ID, "httpTimeout": 10})
+            path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or RENDER_CREDENTIAL_FILE
+            app = firebase_admin.initialize_app(firebase_admin.credentials.Certificate(path),
+                                                options={"projectId": PROJECT_ID, "httpTimeout": 10})
     try:
         messaging.send(
             messaging.Message(

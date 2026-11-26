@@ -13,7 +13,7 @@ if (firebaseConfig.isFile()) {
 android {
  namespace 'tw.vera.nexus'
  compileSdk 35
- defaultConfig { applicationId 'tw.vera.nexus'; minSdk 26; targetSdk 35; versionCode 8; versionName '0.2.0' }
+ defaultConfig { applicationId 'tw.vera.nexus'; minSdk 26; targetSdk 35; versionCode 9; versionName '0.2.1' }
 }
 
 dependencies {

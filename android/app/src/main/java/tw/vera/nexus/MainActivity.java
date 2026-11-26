@@ -32,7 +32,7 @@ public class MainActivity extends Activity {
  private void captureReminder(Intent i){
   if(i!=null&&ReminderReceiver.OPEN.equals(i.getAction())){
    String k=i.getStringExtra("reminder_kind");
-   if(k!=null&&("daily".equals(k)||"test".equals(k)||"remote".equals(k)||"remote-test".equals(k)||k.matches("task:[A-Za-z0-9-]{1,80}"))){String expected=ReminderReceiver.prefs(this).getString("acceptNonce","");String got=i.getStringExtra("accept_nonce");boolean accepted=!expected.isEmpty()&&expected.equals(got);if(accepted)ReminderReceiver.prefs(this).edit().remove("acceptNonce").commit();pendingReminder=(accepted?"accepted:":"")+k;}
+   if(k!=null&&("daily".equals(k)||"test".equals(k)||"remote".equals(k)||"remote-test".equals(k)||k.matches("task:[A-Za-z0-9-]{1,80}"))){String expected=ReminderReceiver.prefs(this).getString("acceptNonce","");String got=i.getStringExtra("accept_nonce");boolean accepted=!expected.isEmpty()&&expected.equals(got);String event=accepted?ReminderReceiver.prefs(this).getString("acceptEvent",""):"";if(accepted)ReminderReceiver.prefs(this).edit().remove("acceptNonce").remove("acceptEvent").commit();pendingReminder=accepted&&!event.isEmpty()?"accepted:cloud:"+event+":"+k:(accepted?"accepted:":"")+k;}
    i.setAction(Intent.ACTION_MAIN);i.removeExtra("reminder_kind");i.removeExtra("accept_nonce");
   }
  }
@@ -122,13 +122,19 @@ public class MainActivity extends Activity {
     boolean revoked=PushEnrollment.disable(MainActivity.this,loadLogin(MainActivity.this),false);
     return clearLogin()&&revoked;
    }
-   @JavascriptInterface public void testPush(){runOnUiThread(()->PushEnrollment.test(MainActivity.this));}
+   @JavascriptInterface public void testPush(){runOnUiThread(()->PushEnrollment.enable(MainActivity.this,true));}
+   @JavascriptInterface public void enableCloudPush(){runOnUiThread(()->PushEnrollment.enable(MainActivity.this,false));}
+   @JavascriptInterface public String cloudDevice(){return PushEnrollment.localState(MainActivity.this);}
+   @JavascriptInterface public void openVeraUpdate(String link){
+    if(link==null||!link.matches("https://github\\.com/tony76426/Publish-Task/releases/download/vera-nexus-v[0-9.]+-fcm-[0-9]+-r[0-9]+/VERA-Nexus\\.apk"))return;
+    runOnUiThread(()->{try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(link)));}catch(android.content.ActivityNotFoundException ignored){Toast.makeText(MainActivity.this,"無法開啟 APK 下載",Toast.LENGTH_LONG).show();}});
+   }
    @JavascriptInterface public void disablePush(){runOnUiThread(()->{
     if(!PushEnrollment.disable(MainActivity.this,loadLogin(MainActivity.this),true))
      Toast.makeText(MainActivity.this,"無法儲存推播停用設定",Toast.LENGTH_LONG).show();
    });}
    @JavascriptInterface public String reminderStatus(){return reminderState();}
-   @JavascriptInterface public int apkVersion(){return 8;}
+   @JavascriptInterface public int apkVersion(){return 9;}
    @JavascriptInterface public void setInCall(boolean on){ReminderReceiver.inCall=on;}
    @JavascriptInterface public void exportBackup(String data){if(data==null||data.length()>3000000)return;runOnUiThread(()->{pendingBackup=data;try{Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json").putExtra(Intent.EXTRA_TITLE,"VERA-backup.json");startActivityForResult(i,SAVE_BACKUP);}catch(Exception e){pendingBackup=null;Toast.makeText(MainActivity.this,"無法開啟備份儲存器",Toast.LENGTH_LONG).show();}});}
    @JavascriptInterface public void importBackup(){runOnUiThread(()->{try{Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json");startActivityForResult(i,OPEN_BACKUP);}catch(Exception e){Toast.makeText(MainActivity.this,"無法開啟備份檔案",Toast.LENGTH_LONG).show();}});}

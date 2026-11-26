@@ -12,7 +12,7 @@ public final class VeraMessagingService extends FirebaseMessagingService {
 
     @Override public void onMessageReceived(RemoteMessage message) {
         Map<String, String> data = message.getData();
-        if (!"vera_call".equals(data.get("type")) || !PushEnrollment.enabled(this)) return;
+        if (!"vera_call".equals(data.get("type")) || !PushEnrollment.enabled(this) || MainActivity.loadLogin(this).isEmpty()) return;
         String event = data.get("event_id");
         long expiry;
         try {
@@ -24,10 +24,9 @@ public final class VeraMessagingService extends FirebaseMessagingService {
         long now = System.currentTimeMillis();
         if (expiry <= now || expiry - now > 60_000 || !PushEnrollment.remember(this, event, expiry)) return;
         String kind = "true".equals(data.get("test")) ? "remote-test" : "remote";
-        String task = data.get("task_id");
-        if ("remote".equals(kind) && task != null && task.matches("[A-Za-z0-9-]{1,80}")) kind = "task:" + task;
+        PushEnrollment.report(this, event, "received");
         // The existing receiver enforces notification permissions and quiet hours.
         // Never retry a remote event locally after its expiry.
-        ReminderReceiver.ring(this, kind, true);
+        ReminderReceiver.ring(this, kind, true, event);
     }
 }
