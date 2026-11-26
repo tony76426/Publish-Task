@@ -98,7 +98,7 @@ def call():
         r=requests.post("https://api.openai.com/v1/realtime/calls",headers=headers(),files={"sdp":(None,sdp,"application/sdp"),"session":(None,json.dumps(session(str(d.get("topic","")),d.get("profile")),ensure_ascii=False),"application/json")},timeout=25)
         if not r.ok: return upstream_error(r)
         if not r.text.startswith("v=0"): return jsonify(error="語音服務未回傳有效 SDP"),502
-        return jsonify(sdp=r.text)
+        return jsonify(sdp=r.text,model=os.getenv("OPENAI_REALTIME_MODEL","gpt-realtime"))
     except requests.RequestException:
         return jsonify(error="OpenAI 語音服務暫時無法連線"),502
 
