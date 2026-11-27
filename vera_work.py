@@ -16,6 +16,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from flask import jsonify, request
 
 from vera_cloud import DAY, record, schema as cloud_schema
+import vera_auto_call as auto_call
 from vera_push import DEVICE_LIFETIME, credentials_configured, registry, valid_id
 
 
@@ -45,6 +46,7 @@ def unseal(key, value):
 
 def migrate(db):
     """Add VERA-owned tables in one transaction. Older processes can ignore them."""
+    auto_call.schema(db)
     db.execute("""CREATE TABLE IF NOT EXISTS vera_work_schema (
         version INTEGER PRIMARY KEY CHECK (version=1))""")
     db.execute("""CREATE TABLE IF NOT EXISTS vera_work_inbox (
@@ -270,6 +272,75 @@ def install_work_routes(app, owner_guard, throttle):
                 db.execute("""UPDATE vera_work_tasks SET body=?,updated=?,revision=revision+1
                               WHERE id=?""", (seal(key, payload), now, task_id))
             return jsonify(task_json(key, read_task(db, task_id)))
+
+    @app.route("/api/v1/secretary/auto-call-policy", methods=["GET", "PUT"])
+    def automatic_call_policy():
+        authorized()
+        if request.method == "GET":
+            with work_db() as db:
+                return jsonify(auto_call.policy(db))
+        data = body_json()
+        enabled = data.get("enabled")
+        if type(enabled) is not bool:
+            raise WorkError(400, "請明確指定是否允許自動來電")
+        device = data.get("device_id", "")
+        deliver = data.get("return_result", False)
+        if enabled and (data.get("consent") is not True or not valid_id(device) or type(deliver) is not bool):
+            raise WorkError(400, "啟用需明確授權及已註冊裝置")
+        now = int(time.time())
+        with work_db() as db:
+            previous = auto_call.policy(db)
+            if not enabled:
+                device, deliver = "", False
+            elif not db.execute("SELECT 1 FROM devices WHERE id=? AND updated>=?",
+                                (device, now - DEVICE_LIFETIME)).fetchone():
+                raise WorkError(404, "裝置尚未註冊或已停用")
+            if (previous["enabled"], previous["device_id"], previous["return_result"]) != (enabled, device, deliver):
+                cloud_schema(db)
+                cancelled = db.execute("""UPDATE cloud_calls SET state='cancelled',changed=?,reason='auto_policy_changed'
+                    WHERE state='queued' AND id IN (SELECT event FROM vera_auto_calls) RETURNING id""", (now,)).fetchall()
+                for item in cancelled:
+                    record(db, item["id"], "cancelled", now)
+                db.execute("""INSERT INTO vera_auto_policy VALUES(1,?,?,?,?)
+                    ON CONFLICT(singleton) DO UPDATE SET enabled=excluded.enabled,device=excluded.device,
+                    deliver=excluded.deliver,changed=excluded.changed""", (enabled, device, deliver, now))
+            return jsonify(auto_call.policy(db))
+
+    @app.post("/api/v1/work/tasks/<uuid:task_id>/call")
+    def source_schedule(task_id):
+        key = authorized(source=True)
+        data = body_json()
+        now = int(time.time())
+        task_id = str(task_id)
+        due = integer(data.get("due_at"), 0, 4102444800)
+        with work_db() as db:
+            task = read_task(db, task_id)
+            previous = db.execute("SELECT event,due FROM vera_auto_calls WHERE task=?", (task_id,)).fetchone()
+            if previous:
+                if previous["due"] != due:
+                    raise WorkError(409, "自動來電已安排，不可重複排程")
+                cloud_schema(db)
+                event = db.execute("SELECT state FROM cloud_calls WHERE id=?", (previous["event"],)).fetchone()
+                return jsonify(event_id=previous["event"], state=event["state"] if event else "expired", replayed=True)
+            setting = auto_call.policy(db)
+            if not setting["enabled"]:
+                raise WorkError(403, "使用者尚未授權自動來電")
+            if not now <= due <= now + 7 * DAY or not auto_call.allowed_time(due):
+                raise WorkError(400, "聯繫須在未來七天的台灣時間 10:00 至午夜前安全時段")
+            if task["state"] != "open" or db.execute("SELECT 1 FROM vera_work_links WHERE task=?", (task_id,)).fetchone():
+                raise WorkError(409, "已有聯繫或工作已結束")
+            unseal(key, task["body"])
+            day = auto_call.local_day(due)
+            count = db.execute("SELECT COUNT(*) FROM vera_auto_calls WHERE local_day=?", (day,)).fetchone()[0]
+            if count >= auto_call.DAILY_LIMIT:
+                raise WorkError(429, "已達每日自動來電上限")
+            if not credentials_configured():
+                raise WorkError(503, "Firebase 發送尚未設定")
+            event = str(uuid4())
+            activate_new_work(db, task_id, setting["device_id"], event, due, False, setting["return_result"], now)
+            db.execute("INSERT INTO vera_auto_calls VALUES(?,?,?,?,?,?)",
+                       (task_id, event, setting["device_id"], due, day, now))
+        return jsonify(event_id=event, state="queued", replayed=False), 202
 
     @app.post("/api/v1/secretary/tasks/<uuid:task_id>/call")
     def owner_schedule(task_id):

@@ -72,6 +72,40 @@
     <div class="secretary-actions"><button type="button" class="secondary" id="v3Export">備份雲端記憶</button>
       <button type="button" class="secondary" id="v3Import">合併記憶備份</button><input id="v3MemoryFile" type="file" accept="application/json" hidden></div>`);
   $('settings').append(memoryCard);
+  const autoCard = mount('settings', `
+    <h2>自動工作來電授權</h2>
+    <p>台灣時間 10:00–24:00（午夜前預留推播安全時間），每天最多兩通，不自動重撥。只限你授權的裝置及 ChatGPT 主動提出的工作聯繫。</p>
+    <p id="v3AutoStatus" class="muted" role="status">尚未查詢設定</p>
+    <label class="secretary-check"><input type="checkbox" id="v3AutoConsent"> 我同意 ChatGPT 自動安排本機的工作來電</label>
+    <label class="secretary-check"><input type="checkbox" id="v3AutoReturn"> 我同意自動回傳通話中明確的決策與指示（不含逐字稿）</label>
+    <div class="secretary-actions"><button type="button" id="v3AutoEnable">儲存並啟用</button><button type="button" class="secondary" id="v3AutoDisable">停用並取消待發自動來電</button><button type="button" class="secondary" id="v3AutoRefresh">重新整理</button></div>
+    <p class="muted">停用後不會安排新的自動來電；已送出的推播無法撤回。手動來電設定不受影響。</p>`);
+  async function refreshAutoPolicy() {
+    try {
+      const setting = await requestWork('/auto-call-policy');
+      const own = setting.device_id && setting.device_id === device().device_id;
+      $('v3AutoConsent').checked = false;
+      $('v3AutoReturn').checked = Boolean(own && setting.return_result);
+      message($('v3AutoStatus'), setting.enabled ? (own ? '已授權本機' : '已授權其他裝置') : '尚未授權／已停用');
+    } catch(error) { message($('v3AutoStatus'), error.message); }
+  }
+  async function setAutoPolicy(enabled) {
+    const installation = device();
+    if (enabled && (!$('v3AutoConsent').checked || !installation.enabled || !installation.device_id)) {
+      return message($('v3AutoStatus'), '請明確同意並先註冊本機推播');
+    }
+    $('v3AutoEnable').disabled = $('v3AutoDisable').disabled = true;
+    try {
+      await requestWork('/auto-call-policy','PUT', enabled ? {
+        enabled:true, consent:true, device_id:installation.device_id, return_result:$('v3AutoReturn').checked
+      } : {enabled:false});
+      await refreshAutoPolicy();
+    } catch(error) { message($('v3AutoStatus'), error.message); }
+    finally { $('v3AutoEnable').disabled = $('v3AutoDisable').disabled = false; }
+  }
+  $('v3AutoEnable').onclick = () => setAutoPolicy(true);
+  $('v3AutoDisable').onclick = () => setAutoPolicy(false);
+  $('v3AutoRefresh').onclick = refreshAutoPolicy;
   const loginCard = $('token').closest('.card');
   if (loginCard) $('settings').prepend(loginCard);
   const diagnostics = document.createElement('p');
@@ -481,7 +515,7 @@
     if(selected!==lastPage){window.scrollTo(0,0);lastPage=selected;}
     if (selected === 'tasks') void refreshWork();
     if (selected === 'history') void refreshCalls();
-    if (selected === 'settings' && token()) void refreshMemory();
+    if (selected === 'settings' && token()) { void refreshMemory(); void refreshAutoPolicy(); }
     if (selected === 'cloud' && token()) {
       requestWork('/diagnostics').then(data => {
         diagnostics.textContent = '雲端摘要 ' + data.calls_last_day + '／' + data.daily_limit

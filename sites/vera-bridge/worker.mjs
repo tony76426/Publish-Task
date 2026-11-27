@@ -16,6 +16,7 @@ const tools = [
   tool('get_task','查詢一項工作和目前修訂版',{task_id:str},['task_id'],true),
   tool('update_task','以目前修訂版修改工作內容',{...identity,...fields},['task_id','revision']),
   tool('cancel_task','取消尚未回傳的工作及其待發來電',identity,['task_id','revision'],false,true),
+  tool('schedule_task_call','僅依已取得的手機擁有人授權，安排工作來電；使用台灣時間 10:00–24:00，指定 Unix 秒數，不重複安排',{task_id:str,due_at:number},['task_id','due_at']),
   tool('read_results','依上次處理完畢的游標讀取已回傳決策及指示',{after:number},[],true),
   tool('resume_work','讀取這個工作流程尚未確認處理的 VERA 決策與指示',{consumer},['consumer'],true),
   tool('ack_results','僅在原工作系統已保存結果後，確認已依序處理的游標',
@@ -40,6 +41,10 @@ function route(name, args) {
   }
   const {task_id, ...body} = args;
   if (typeof task_id !== 'string' || !uuid.test(task_id)) throw Error('工作 ID 無效');
+  if (name === 'schedule_task_call') {
+    if (!Number.isSafeInteger(body.due_at) || body.due_at < 0) throw Error('聯繫時間無效');
+    return ['/tasks/' + task_id + '/call','POST',{due_at:body.due_at}];
+  }
   const method = {get_task:'GET',update_task:'PATCH',cancel_task:'DELETE'}[name];
   if (!method) throw Error('找不到工具');
   return ['/tasks/' + task_id,method,method === 'GET' ? undefined : body];
@@ -102,7 +107,7 @@ export default {
       if (!response.ok) return toolReply(id,'VERA 工作 API 回傳 HTTP '+response.status,true);
       return toolReply(id,await response.json());
     } catch (error) {
-      if (['工作 ID 無效','結果游標無效','接續工作識別碼無效'].includes(error.message)) return toolReply(id,error.message,true);
+      if (['工作 ID 無效','結果游標無效','接續工作識別碼無效','聯繫時間無效'].includes(error.message)) return toolReply(id,error.message,true);
       return toolReply(id,'目前無法連到 VERA 工作 API。',true);
     }
   }

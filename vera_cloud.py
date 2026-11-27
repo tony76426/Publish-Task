@@ -9,6 +9,7 @@ from flask import jsonify, request
 
 from vera_push import DEVICE_LIFETIME, FCM_TTL, PROJECT_ID, DeviceUnregistered
 from vera_push import credentials_configured, registry, send_fcm, valid_id
+from vera_auto_call import delivery_allowed
 
 VERSION = "0.3.0"
 TERMINAL = frozenset({"accepted", "declined", "missed", "quiet", "busy", "blocked", "failed", "cancelled"})
@@ -65,6 +66,10 @@ def dispatch_due(log, now=None):
         if not row:
             return False
         event, device, test, task = row
+        if not delivery_allowed(db, event, now):
+            db.execute("UPDATE cloud_calls SET state='cancelled',reason='auto_quiet_or_revoked',changed=? WHERE id=?", (now, event))
+            record(db, event, "cancelled", now)
+            return True
         record(db, event, "sending", now)
         registration = db.execute("SELECT token FROM devices WHERE id=? AND updated>=?",
                                   (device, now - DEVICE_LIFETIME)).fetchone()

@@ -15,7 +15,7 @@ test('Site discovery exposes scoped tools and blocks other identities', async ()
   const discovery = await (await call('server/discover')).json();
   assert.deepEqual(discovery.result.supportedVersions,['2026-07-28']);
   const listing = await (await call('tools/list')).json();
-  assert.equal(listing.result.tools.length,8);
+  assert.equal(listing.result.tools.length,9);
   const denied = await (await call('tools/call',{name:'list_tasks'},'other-owner')).json();
   assert.equal(denied.result.isError,true);
   const absent = await (await call('tools/call',{name:'read_results'},null)).json();
@@ -57,4 +57,17 @@ test('Hosted bridge separates reading work from persisting a completed cursor',a
   assert.deepEqual(seen,[['/api/v1/work/inbox/vera-qa','GET',undefined],
     ['/api/v1/work/inbox/vera-qa','PUT','{"after":0,"cursors":[8]}']]);
   assert.equal((await invoke('resume_work',{consumer:'https://invalid.example'})).isError,true);
+});
+
+test('Automatic call requests route only to source-authorized scheduling and do not carry device credentials', async t => {
+  const task_id='c21a6a0f-2a0d-4c13-9b12-010000000001';
+  const fetch=t.mock.method(globalThis,'fetch',async(url,req)=>{
+    assert.equal(new URL(url).pathname,'/api/v1/work/tasks/'+task_id+'/call');
+    assert.equal(req.method,'POST');
+    assert.deepEqual(JSON.parse(req.body),{due_at:1900000000});
+    return Response.json({error:'Owner consent required'},{status:403});
+  });
+  const result=(await (await call('tools/call',{name:'schedule_task_call',arguments:{task_id,due_at:1900000000,device_id:'ignored'}})).json()).result;
+  assert.equal(result.isError,true);
+  assert.equal(fetch.mock.callCount(),1);
 });
