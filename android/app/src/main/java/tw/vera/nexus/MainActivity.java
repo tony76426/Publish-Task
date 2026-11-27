@@ -42,18 +42,48 @@ public class MainActivity extends Activity {
    j.put("enabled",p.getBoolean("enabled",false));j.put("hour",p.getInt("hour",9));j.put("minute",p.getInt("minute",0));j.put("next",p.getLong("next",0));j.put("notifications",ReminderReceiver.notifyAllowed(this));j.put("exact",ReminderReceiver.exactAllowed(this));j.put("fullAllowed",ReminderReceiver.fullAllowed(this));j.put("fullscreen",p.getBoolean("fullscreen",false));j.put("interval",p.getInt("interval",0));j.put("customTimes",new org.json.JSONArray(p.getString("customTimes","[]")));j.put("from",p.getInt("from",0));j.put("to",p.getInt("to",0));j.put("quiet",p.getBoolean("quiet",false));j.put("quietFrom",p.getInt("quietFrom",1320));j.put("quietTo",p.getInt("quietTo",420));j.put("retry",p.getBoolean("retry",false));j.put("tone",p.getString("tone","ring"));j.put("firedTasks",p.getString("firedTasks",""));j.put("log",ReminderReceiver.log(this));return j.toString();
   }catch(Exception e){return "{}";}
  }
- private static final String HOST="publish-task.onrender.com";
- private boolean allowed(Uri u){return u!=null && "https".equals(u.getScheme()) && HOST.equals(u.getHost()) && (u.getPort()==-1 || u.getPort()==443);}
+ private static final Uri ORIGIN=Uri.parse(BuildConfig.VERA_ORIGIN);
+ private boolean allowed(Uri url){
+  return url!=null&&ORIGIN.getScheme().equals(url.getScheme())&&ORIGIN.getHost().equals(url.getHost())
+    &&(ORIGIN.getPort()==url.getPort()||("https".equals(url.getScheme())&&ORIGIN.getPort()==-1&&url.getPort()==443));
+ }
  private static final String LOGIN_KEY="vera_nexus_token_v1";
+ private static final String DATA_KEY="vera_nexus_local_data_v1";
+ private static final String APP_PATH="/app/v3";
  private static SecretKey loginKey(boolean create) throws Exception{
+  return key(LOGIN_KEY,create);
+ }
+ private static synchronized SecretKey key(String alias,boolean create) throws Exception{
   KeyStore ks=KeyStore.getInstance("AndroidKeyStore");ks.load(null);
-  if(ks.containsAlias(LOGIN_KEY))return (SecretKey)ks.getKey(LOGIN_KEY,null);
+  if(ks.containsAlias(alias))return (SecretKey)ks.getKey(alias,null);
   if(!create)return null;
   KeyGenerator gen=KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore");
-  gen.init(new KeyGenParameterSpec.Builder(LOGIN_KEY,KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT)
+  gen.init(new KeyGenParameterSpec.Builder(alias,KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT)
     .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
     .setKeySize(256).setRandomizedEncryptionRequired(true).build());
   return gen.generateKey();
+ }
+ private static String protectData(String field,String value,boolean decrypt){
+  if(field==null||!field.matches("[A-Za-z][A-Za-z0-9]{0,32}")||value==null||value.length()>6500000)return "";
+  try{
+   SecretKey key=key(DATA_KEY,!decrypt);
+   if(key==null)return "";
+   Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");
+   byte[] data;
+   if(decrypt){
+    String[] parts=value.split("\\.",-1);
+    if(parts.length!=2)return "";
+    cipher.init(Cipher.DECRYPT_MODE,key,new GCMParameterSpec(128,Base64.decode(parts[0],Base64.NO_WRAP)));
+    data=Base64.decode(parts[1],Base64.NO_WRAP);
+   }else{
+    cipher.init(Cipher.ENCRYPT_MODE,key);
+    data=value.getBytes(StandardCharsets.UTF_8);
+   }
+   cipher.updateAAD(field.getBytes(StandardCharsets.UTF_8));
+   byte[] processed=cipher.doFinal(data);
+   if(decrypt)return new String(processed,StandardCharsets.UTF_8);
+   return Base64.encodeToString(cipher.getIV(),Base64.NO_WRAP)+"."+Base64.encodeToString(processed,Base64.NO_WRAP);
+  }catch(Exception e){return "";}
  }
  private synchronized boolean saveLogin(String token){
   if(token==null||token.length()<16||token.length()>4096)return false;
@@ -102,8 +132,15 @@ public class MainActivity extends Activity {
   WebSettings s=web.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(true);
   s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMediaPlaybackRequiresUserGesture(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
   web.setWebViewClient(new WebViewClient(){
-   @Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return !allowed(r.getUrl());}
+   @Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){
+    Uri url=r.getUrl();
+    return !allowed(url) || !r.isForMainFrame() || (!APP_PATH.equals(url.getPath())&&!"/app".equals(url.getPath()));
+   }
    @Override public void onReceivedError(WebView v,WebResourceRequest r,WebResourceError e){if(r.isForMainFrame())Toast.makeText(MainActivity.this,"無法連線 VERA，請確認網路後重新開啟",Toast.LENGTH_LONG).show();}
+   @Override public void onReceivedHttpError(WebView v,WebResourceRequest r,WebResourceResponse response){
+    if(r.isForMainFrame()&&allowed(r.getUrl())&&APP_PATH.equals(r.getUrl().getPath())&&response.getStatusCode()==404)
+     v.post(()->v.loadUrl(BuildConfig.VERA_ORIGIN+"/app"));
+   }
   });
   web.setWebChromeClient(new WebChromeClient(){
    @Override public void onPermissionRequest(PermissionRequest r){runOnUiThread(()->{
@@ -118,6 +155,8 @@ public class MainActivity extends Activity {
    @JavascriptInterface public void share(String t){if(t==null||t.length()>100000)return;runOnUiThread(()->{Intent i=new Intent(Intent.ACTION_SEND);i.setType("text/plain");i.putExtra(Intent.EXTRA_TEXT,t);startActivity(Intent.createChooser(i,"分享 VERA 摘要"));});}
    @JavascriptInterface public boolean saveVerifiedLogin(String token){boolean saved=saveLogin(token);if(saved)PushEnrollment.refresh(MainActivity.this);return saved;}
    @JavascriptInterface public String loadVerifiedLogin(){return loadLogin(MainActivity.this);}
+   @JavascriptInterface public String sealPrivateData(String field,String value){return protectData(field,value,false);}
+   @JavascriptInterface public String openPrivateData(String field,String value){return protectData(field,value,true);}
    @JavascriptInterface public boolean clearVerifiedLogin(){
     boolean revoked=PushEnrollment.disable(MainActivity.this,loadLogin(MainActivity.this),false);
     return clearLogin()&&revoked;
@@ -134,7 +173,7 @@ public class MainActivity extends Activity {
      Toast.makeText(MainActivity.this,"無法儲存推播停用設定",Toast.LENGTH_LONG).show();
    });}
    @JavascriptInterface public String reminderStatus(){return reminderState();}
-   @JavascriptInterface public int apkVersion(){return 9;}
+   @JavascriptInterface public int apkVersion(){return BuildConfig.VERSION_CODE;}
    @JavascriptInterface public void setInCall(boolean on){ReminderReceiver.inCall=on;}
    @JavascriptInterface public void exportBackup(String data){if(data==null||data.length()>3000000)return;runOnUiThread(()->{pendingBackup=data;try{Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json").putExtra(Intent.EXTRA_TITLE,"VERA-backup.json");startActivityForResult(i,SAVE_BACKUP);}catch(Exception e){pendingBackup=null;Toast.makeText(MainActivity.this,"無法開啟備份儲存器",Toast.LENGTH_LONG).show();}});}
    @JavascriptInterface public void importBackup(){runOnUiThread(()->{try{Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json");startActivityForResult(i,OPEN_BACKUP);}catch(Exception e){Toast.makeText(MainActivity.this,"無法開啟備份檔案",Toast.LENGTH_LONG).show();}});}
@@ -160,9 +199,7 @@ public class MainActivity extends Activity {
    @JavascriptInterface public boolean hasMicPermission(){return micGranted();}
    @JavascriptInterface public void askMicPermission(){runOnUiThread(()->requestMic());}
   },"VeraAndroid");
-  web.loadUrl("https://"+HOST+"/app");
-  // Ask Android first, outside the asynchronous WebRTC capture request.
-  if(!micGranted())web.postDelayed(()->{if(!isFinishing() && !isDestroyed())requestMic();},350);
+  web.loadUrl(BuildConfig.VERA_ORIGIN+APP_PATH);
  }
  @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request!=SAVE_BACKUP&&request!=OPEN_BACKUP)return;try{if(result!=RESULT_OK||data==null||data.getData()==null)return;Uri u=data.getData();if(request==SAVE_BACKUP){if(pendingBackup==null)throw new java.io.IOException("empty");try(java.io.OutputStream out=getContentResolver().openOutputStream(u,"wt")){if(out==null)throw new java.io.IOException("file");out.write(pendingBackup.getBytes(StandardCharsets.UTF_8));}Toast.makeText(this,"已儲存 VERA 備份檔",Toast.LENGTH_LONG).show();}else{java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();try(java.io.InputStream in=getContentResolver().openInputStream(u)){if(in==null)throw new java.io.IOException("file");byte[] buffer=new byte[8192];int n;while((n=in.read(buffer))!=-1){if(out.size()+n>3000000)throw new java.io.IOException("too large");out.write(buffer,0,n);}}String raw=new String(out.toByteArray(),StandardCharsets.UTF_8);if(web!=null)web.evaluateJavascript("window.veraRestoreBackup && window.veraRestoreBackup("+org.json.JSONObject.quote(raw)+")",null);}}catch(Exception e){Toast.makeText(this,"備份操作失敗，請檢查檔案",Toast.LENGTH_LONG).show();}finally{if(request==SAVE_BACKUP)pendingBackup=null;}}
  @Override public void onRequestPermissionsResult(int r,String[] p,int[] g){

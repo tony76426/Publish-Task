@@ -1,0 +1,50 @@
+name: VERA isolated backend acceptance
+on:
+  push:
+    branches: [vera-v030-staging]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: vera-v030-staging-backend
+  cancel-in-progress: true
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/vera-v030-staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      VERA_ACCESS_TOKEN: staging-ci-dummy-token-only
+      OPENAI_API_KEY: staging-ci-dummy-key-only
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install production dependencies
+        run: pip install -r requirements.txt
+      - name: Compile and run isolated backend tests
+        run: |
+          python -m py_compile vera_app.py vera_cloud.py vera_push.py vera_work.py vera_db_backup.py vera_release.py gunicorn.conf.py app.py
+          python -m unittest -v test_vera_push test_vera_cloud test_vera_work test_vera_preupgrade test_vera_release_gate
+      - name: Validate bridge and encrypted backup tests
+        run: |
+          node --check vera_cloud_ui.js
+          node --check vera_v3_ui.js
+          node --test sites/vera-bridge/worker.test.mjs test_vera_backup.mjs
+      - name: Check old and new app entrypoints without network
+        run: |
+          python - <<'PY'
+          from vera_app import app
+          c = app.test_client()
+          assert c.get('/health').status_code == 200
+          assert c.get('/app').status_code == 200
+          assert c.get('/app/v3').status_code == 200
+          assert c.get('/api/v1/work/tasks').status_code in (401, 403, 503)
+          print('Old and new entrypoints available; unauthenticated work access rejected.')
+          PY

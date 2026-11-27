@@ -10,7 +10,7 @@ from flask import jsonify, request
 from vera_push import DEVICE_LIFETIME, FCM_TTL, PROJECT_ID, DeviceUnregistered
 from vera_push import credentials_configured, registry, send_fcm, valid_id
 
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 TERMINAL = frozenset({"accepted", "declined", "missed", "quiet", "busy", "blocked", "failed", "cancelled"})
 DEVICE_STATES = TERMINAL - {"cancelled"} | {"received", "ringing"}
 DAY = 86400
@@ -106,7 +106,7 @@ def run_scheduler(stop, log):
         stop.wait(4)
 
 
-def install_cloud_routes(app, guard, throttle):
+def install_cloud_routes(app, guard, throttle, work_context=None):
     def device_body():
         body = request.get_json(silent=True)
         return body if isinstance(body, dict) and valid_id(body.get("device_id")) else None
@@ -232,10 +232,14 @@ def install_cloud_routes(app, guard, throttle):
         now = int(time.time())
         with registry() as db:
             schema(db)
-            row = db.execute("""SELECT purpose, task, test FROM cloud_calls
+            row = db.execute("""SELECT purpose, task, test, COALESCE(retry_of,id) FROM cloud_calls
                                 WHERE id=? AND device=? AND state='accepted' AND changed>=?
                                 AND EXISTS(SELECT 1 FROM devices WHERE id=?)""",
                              (body["event_id"], body["device_id"], now-300, body["device_id"])).fetchone()
-        if not row:
-            return jsonify(error="尚未收到接聽確認，或來電內容已到期"), 404
-        return jsonify(purpose=row[0], task_id=row[1], test=bool(row[2]))
+            if not row:
+                return jsonify(error="尚未收到接聽確認，或來電內容已到期"), 404
+            if work_context and row[1] and not row[2]:
+                context = work_context(db, row[3])
+                if context:
+                    return jsonify(context)
+            return jsonify(purpose=row[0], task_id=row[1], test=bool(row[2]))

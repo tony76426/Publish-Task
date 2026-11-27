@@ -18,11 +18,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
-import javax.net.ssl.HttpsURLConnection;
+import java.net.HttpURLConnection;
 import org.json.JSONObject;
 
 final class PushEnrollment {
-    private static final String BASE = "https://publish-task.onrender.com/api/";
+    private static final String BASE = BuildConfig.VERA_ORIGIN + "/api/";
     private static final String PROJECT = "vera-nexus-e5119";
     private static final ExecutorService NETWORK = Executors.newSingleThreadExecutor();
     private static boolean refreshQueued;
@@ -245,7 +245,7 @@ final class PushEnrollment {
     }
 
     private static int request(String method, String path, String bearer, JSONObject payload) throws Exception {
-        HttpsURLConnection conn = (HttpsURLConnection) new URL(BASE + path).openConnection();
+        HttpURLConnection conn = (HttpURLConnection) new URL(BASE + path).openConnection();
         try {
             conn.setConnectTimeout(8000);
             conn.setReadTimeout(16000);

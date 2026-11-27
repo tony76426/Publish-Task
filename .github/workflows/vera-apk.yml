@@ -10,13 +10,26 @@ on:
       - 'vera_cloud.py'
       - 'vera_cloud_ui.js'
       - 'test_vera_cloud.py'
+      - 'test_vera_work.py'
+      - 'vera_work.py'
+      - 'vera_release.py'
+      - 'vera_db_backup.py'
+      - 'vera_v3*'
+      - 'vera_backup*'
+      - 'test_vera_backup.mjs'
+      - 'sites/vera-bridge/**'
       - 'gunicorn.conf.py'
       - 'requirements-vera.txt'
       - 'vera_ui.html'
       - '.github/workflows/vera-apk.yml'
   workflow_dispatch:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+        description: Publish using the verified upgrade signer after staged acceptance.
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: vera-apk
   cancel-in-progress: true
@@ -32,8 +45,8 @@ jobs:
       - name: Backend smoke checks (mocked credentials)
         run: |
           pip install -r requirements-vera.txt
-          python -m py_compile vera_app.py vera_push.py vera_cloud.py gunicorn.conf.py app.py
-          python -m unittest -v test_vera_push test_vera_cloud
+          python -m py_compile vera_app.py vera_push.py vera_cloud.py vera_work.py vera_release.py vera_db_backup.py gunicorn.conf.py app.py
+          python -m unittest -v test_vera_push test_vera_cloud test_vera_work
           python - <<'PY'
           import os
           from unittest.mock import patch, Mock
@@ -70,6 +83,9 @@ jobs:
           PY
           node --check /tmp/vera.js
           node --check vera_cloud_ui.js
+          node --check vera_v3_ui.js
+          node --test sites/vera-bridge/worker.test.mjs
+          node --test test_vera_backup.mjs
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -85,6 +101,11 @@ jobs:
       - name: Build APK
         env:
           VERA_FIREBASE_ANDROID_CONFIG: ${{ vars.VERA_FIREBASE_ANDROID_CONFIG }}
+          PUBLISH: ${{ inputs.publish == true }}
+          KEYSTORE_B64: ${{ secrets.VERA_SIGNING_KEYSTORE_BASE64 }}
+          VERA_SIGNING_STORE_PASSWORD: ${{ secrets.VERA_SIGNING_STORE_PASSWORD }}
+          VERA_SIGNING_ALIAS: ${{ secrets.VERA_SIGNING_ALIAS }}
+          VERA_SIGNING_KEY_PASSWORD: ${{ secrets.VERA_SIGNING_KEY_PASSWORD }}
         working-directory: android
         run: |
           if [[ -n "$VERA_FIREBASE_ANDROID_CONFIG" ]]; then
@@ -92,26 +113,67 @@ jobs:
           else
             echo '::notice::Android Firebase config unavailable; the build supports local reminders only.'
           fi
-          gradle --no-daemon :app:assembleDebug
-      - name: Verify APK signature
+          if [[ "$PUBLISH" == true ]]; then
+            test -s app/google-services.json
+            test -n "$KEYSTORE_B64"
+            test -n "$VERA_SIGNING_STORE_PASSWORD"
+            test -n "$VERA_SIGNING_ALIAS"
+            test -n "$VERA_SIGNING_KEY_PASSWORD"
+            umask 077
+            export VERA_SIGNING_FILE="$(mktemp)"
+            trap 'rm -f "$VERA_SIGNING_FILE"' EXIT
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$VERA_SIGNING_FILE"
+            gradle --no-daemon :app:assembleRelease
+            cp app/build/outputs/apk/release/app-release.apk ../VERA-Nexus.apk
+          else
+            gradle --no-daemon :app:assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk ../VERA-Nexus.apk
+          fi
+      - name: Verify APK and upgrade signer
+        env:
+          PUBLISH: ${{ inputs.publish == true }}
+          EXPECTED_SIGNER: ${{ vars.VERA_UPGRADE_CERT_SHA256 }}
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose android/app/build/outputs/apk/debug/app-debug.apk
-          cp android/app/build/outputs/apk/debug/app-debug.apk VERA-Nexus.apk
+          signer="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs VERA-Nexus.apk | awk '/Signer #1 certificate SHA-256 digest:/ {print $NF}')"
+          test -n "$signer"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging VERA-Nexus.apk > "$RUNNER_TEMP/vera-manifest.txt"
+          grep -q "package: name='tw.vera.nexus' versionCode='11' versionName='0.3.0'" "$RUNNER_TEMP/vera-manifest.txt"
           sha256sum VERA-Nexus.apk > VERA-Nexus.apk.sha256
+          if [[ "$PUBLISH" == true ]]; then
+            test "$GITHUB_REF" = 'refs/heads/vera-mvp'
+            if [[ -z "$EXPECTED_SIGNER" ]]; then
+              EXPECTED_SIGNER=090145966eb3fa965d896e9ff7dcff09d54b418349b11ba8639a2ffcce41be4e
+            fi
+            test "$signer" = "${EXPECTED_SIGNER,,}"
+            printf '{"package":"tw.vera.nexus","version":"0.3.0","version_code":11,"firebase":true,"signer_sha256":"%s","apk_sha256":"%s"}\n' "$signer" "$(cut -d ' ' -f 1 VERA-Nexus.apk.sha256)" > vera-release.json
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: VERA-Nexus-APK
           path: |
             VERA-Nexus.apk
             VERA-Nexus.apk.sha256
-      - name: Publish test prerelease
+            vera-release.json
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref_name == 'vera-mvp'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VERA-Nexus-APK
+      - name: Publish verified release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="vera-nexus-v0.2.1-fcm-${GITHUB_RUN_NUMBER}-r${GITHUB_RUN_ATTEMPT}"
-          if [[ -s android/app/google-services.json ]]; then
-            push_note="Firebase client config embedded. Live push additionally requires Render credentials and on-device opt-in."
-          else
-            push_note="Firebase client config absent. This build supports local reminders only."
-          fi
-          gh release create "$tag" VERA-Nexus.apk VERA-Nexus.apk.sha256 --target "$GITHUB_SHA" --prerelease --title "VERA Nexus 0.2.1 cloud-call test build" --notes "$push_note Includes Cloud Connection Center, call scheduling and status receipts. Requires private VERA_ACCESS_TOKEN. Debug signature; not for production distribution."
+          sha256sum -c VERA-Nexus.apk.sha256
+          test -s vera-release.json
+          tag="vera-nexus-v0.3.0-fcm-${GITHUB_RUN_NUMBER}-r${GITHUB_RUN_ATTEMPT}"
+          gh release create "$tag" VERA-Nexus.apk VERA-Nexus.apk.sha256 vera-release.json \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "VERA Nexus 0.3.0" \
+            --notes-file - <<'EOF'
+          Firebase client config embedded. Uses the verified VERA APK signer.
+          Includes the secretary workspace, task exchange, automatic call summaries, and private cloud memory.
+          EOF
