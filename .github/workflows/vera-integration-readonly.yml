@@ -1,0 +1,43 @@
+name: VERA production read-only integration check
+on:
+  push:
+    branches: [vera-v030-integration]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/vera-v030-integration'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check production public health and private API access boundaries
+        env:
+          VERA_ORIGIN: https://publish-task.onrender.com
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request, urllib.error
+          origin = os.environ['VERA_ORIGIN']
+          def read(path):
+              req = urllib.request.Request(origin + path, headers={'User-Agent':'VERA-readonly-acceptance/1'})
+              try:
+                  with urllib.request.urlopen(req, timeout=25) as resp:
+                      return resp.status, resp.read(300000)
+              except urllib.error.HTTPError as exc:
+                  return exc.code, b''
+          code, body = read('/health')
+          print('Health HTTP', code)
+          assert code == 200
+          data = json.loads(body)
+          print('Health version:', data.get('version'))
+          assert data.get('status') == 'ok' and data.get('version') == '0.3.0'
+          for path in ('/app','/app/v3'):
+              code, _ = read(path)
+              print(path, code)
+              assert code == 200
+          for path in ('/api/v1/work/tasks','/api/v1/work/results','/api/v1/work/inbox/acceptance-readonly','/api/v1/secretary/tasks','/api/v1/secretary/memory','/api/v1/secretary/diagnostics'):
+              code, _ = read(path)
+              print(path, code)
+              assert code in (401,403,503), 'Private route not denied'
+          print('All read-only checks passed; no tasks, calls, or personal records written.')
+          PY
