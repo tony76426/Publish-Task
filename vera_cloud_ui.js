@@ -97,7 +97,7 @@
     const info = local();
     const native = Boolean(window.VeraAndroid?.cloudDevice);
     text('cloudFirebase', native ? label(info.configured, 'APK 已載入 Firebase 設定', 'APK 缺少 Firebase 設定') : '需使用新版 Android APK');
-    text('cloudApkVersion', ({7: '0.1.6', 8: '0.2.0', 9: '0.2.1'})[window.VeraAndroid?.apkVersion?.()] || '網頁或未知版本');
+    text('cloudApkVersion', ({7: '0.1.6', 8: '0.2.0', 9: '0.2.1', 10: '0.3.0', 11: '0.3.0'})[window.VeraAndroid?.apkVersion?.()] || '網頁或未知版本');
     text('cloudNotifications', native ? label(info.notifications, '通知已允許', '需要允許通知') : '僅 Android 支援');
     text('cloudFullscreen', native ? label(info.fullscreen && reminderState().fullscreen, '全螢幕來電已允許', '使用一般通知') : '僅 Android 支援');
     text('cloudDevice', info.enabled ? '確認中' : '此手機尚未啟用');
@@ -182,9 +182,16 @@
 
   async function checkApk() {
     try {
-      const response = await fetch('/api/apk/latest', {cache: 'no-store', signal: timeout(7000)});
+      const endpoint = secretaryMode?'/api/v1/secretary/update':'/api/apk/latest';
+      const response = await fetch(endpoint, {cache: 'no-store', signal: timeout(7000)});
       const build = await response.json();
-      if (!response.ok || !/^https:\/\/github\.com\/tony76426\/Publish-Task\/releases\/download\/vera-nexus-v0\.2\.1-fcm-[0-9]+-r[0-9]+\/VERA-Nexus\.apk$/.test(build.url)) {
+      if(secretaryMode&&response.ok&&(!build.available||build.version_code<=Number(window.VeraAndroid?.apkVersion?.()||0))){
+        text('cloudApkInfo',build.available?'已使用目前發布的版本':'目前沒有已驗證簽章可供升級的版本');
+        return;
+      }
+      const validTag=secretaryMode?/^vera-nexus-v\d+\.\d+\.\d+-fcm-\d+-r\d+$/:/^vera-nexus-v0\.2\.1-fcm-\d+-r\d+$/;
+      const exactUrl='https://github.com/tony76426/Publish-Task/releases/download/'+build.tag+'/VERA-Nexus.apk';
+      if (!response.ok || !validTag.test(build.tag) || build.url!==exactUrl) {
         throw Error('暫時無法取得新版 APK');
       }
       latestApk = build.url;
@@ -211,21 +218,31 @@
     if (!token()) { page('settings'); return; }
     const current = epoch;
     let topic = 'VERA 遠端主動聯繫';
+    let context = '', retrieved = false;
+    const deviceId = local().device_id;
     // The local receipt is queued before the WebView opens. Briefly allow it to arrive.
-    for (let attempt = 0; attempt < 3; attempt++) {
+    const attempts=secretaryMode?5:3;
+    for (let attempt = 0; attempt < attempts; attempt++) {
       try {
-        const data = await cloudRequest('context', {device_id: local().device_id, event_id: eventId});
+        const data = await cloudRequest('context', {device_id: deviceId, event_id: eventId});
         const task = tasks.find(item => item.id === data.task_id);
         topic = data.purpose || task?.title || topic;
+        context = data.work_context || '';
+        retrieved = true;
         break;
       } catch {
-        if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 450));
+        if (attempt + 1 < attempts) await new Promise(resolve => setTimeout(resolve, 450+attempt*180));
       }
       if (current !== epoch || document.hidden || busy) return;
     }
     if (current !== epoch || document.hidden || busy) return;
+    if(secretaryMode&&!retrieved){
+      page('cloud');
+      text('cloudNotice','無法取得這通來電的聯繫目的，請確認網路與來電狀態後再安排。');
+      return;
+    }
     $('topic').value = topic.slice(0, 300);
     page('home');
-    start(false, 'cloud');
+    start(false, 'cloud', {device_id:deviceId,event_id:eventId,work_context:context});
   };
 })();

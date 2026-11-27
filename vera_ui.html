@@ -51,20 +51,74 @@
 'use strict';
 const $=id=>document.getElementById(id), text=(id,t)=>$(id).textContent=t;
 let pc=null,dc=null,stream=null,epoch=0,started=0,timer=null,rows=[],rowMap=new Map(),sessionId=null,busy=false,muted=false;
-function read(key,otherwise){try{return JSON.parse(localStorage.getItem('vera.'+key))??otherwise}catch{return otherwise}}
-function write(key,v){try{localStorage.setItem('vera.'+key,JSON.stringify(v));return true}catch{alert('本機儲存失敗，請先分享備份。');return false}}
+const secretaryMode=document.body.classList.contains('secretary');
+function read(key,otherwise){
+ try{
+  const privateValue=secretaryMode&&window.VeraAndroid?.openPrivateData
+   ?localStorage.getItem('vera.private.'+key):null;
+  const raw=privateValue?window.VeraAndroid.openPrivateData(key,privateValue):localStorage.getItem('vera.'+key);
+  return JSON.parse(raw)??otherwise;
+ }catch{return otherwise}
+}
+function write(key,value,quiet=false){
+ try{
+  const raw=JSON.stringify(value);
+  if(secretaryMode&&window.VeraAndroid?.sealPrivateData){
+   const protectedValue=window.VeraAndroid.sealPrivateData(key,raw);
+   if(!protectedValue)throw Error('Keystore');
+   localStorage.setItem('vera.private.'+key,protectedValue);
+  }else localStorage.setItem('vera.'+key,raw);
+  return true;
+ }catch{if(!quiet)alert('本機儲存失敗，請檢查可用空間及備份。');return false}
+}
 let histories=read('history',[]),tasks=read('tasks',[]);let taskFilter='open', incomingTask=null, summaryBusy=false, sessionTopic='',sessionSource='manual'; tasks=tasks.map(t=>({...t,id:t.id||crypto.randomUUID(),priority:t.priority||'normal',due:t.due||'',notified:!!t.notified}));
-function page(p){if(p==='settings'&&window.veraRefreshReminder)window.veraRefreshReminder();for(const id of ['home','tasks','history','cloud','settings'])$(id).hidden=id!==p;document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('sel',b.dataset.page===p));if(p==='cloud')window.veraRefreshCloud?.();if(p==='history')renderHistory();if(p==='tasks')renderTasks()}
+function page(p){if(p==='settings'&&window.veraRefreshReminder)window.veraRefreshReminder();for(const id of ['home','tasks','history','cloud','settings'])$(id).hidden=id!==p;document.querySelectorAll('[data-page]').forEach(b=>{b.classList.toggle('sel',b.dataset.page===p);if(secretaryMode){if(b.dataset.page===p)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current')}});if(p==='cloud')window.veraRefreshCloud?.();if(p==='history')renderHistory();if(p==='tasks')renderTasks();window.veraPageChanged?.(p)}
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>page(b.dataset.page));
 function token(){return $('token').value.trim()}
 async function api(path,body){if(!token()){page('settings');throw Error('請先輸入 VERA 連線憑證')}const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token()},body:JSON.stringify(body),cache:'no-store'});let j;try{j=await response.json()}catch{throw Error('伺服器回應異常：'+response.status)}if(!response.ok){const e=Error(j.error||('HTTP '+response.status));e.status=response.status;throw e;}return j}
 function entry(role,value,id,delta=false){if(!value)return;let e=id&&rowMap.get(id);if(!e){e={role,text:''};rows.push(e);if(id)rowMap.set(id,e)}e.text=delta?e.text+value:value;renderTranscript()}
 function renderTranscript(){const box=$('transcript');box.replaceChildren();for(const r of rows){const d=document.createElement('div');d.className='entry';const b=document.createElement('b');b.textContent=r.role;d.append(b,document.createTextNode(r.text));box.append(d)}box.scrollTop=box.scrollHeight;$('summary').disabled=!rows.length||busy}
 function send(obj){if(dc&&dc.readyState==='open')dc.send(JSON.stringify(obj))}
-function event(e){let x;try{x=JSON.parse(e.data)}catch{return}const id=x.item_id||x.response_id;if(x.type==='conversation.item.input_audio_transcription.completed'){entry('你',x.transcript,id)}else if(x.type==='response.output_audio_transcript.delta'||x.type==='response.audio_transcript.delta'){entry('VERA',x.delta,id,true)}else if(x.type==='response.output_audio_transcript.done'||x.type==='response.audio_transcript.done'){entry('VERA',x.transcript,id)}else if(x.type==='error'){text('callError',x.error?.message||'語音服務發生錯誤')}else if(x.type==='input_audio_buffer.speech_started'){text('status','VERA 正在聆聽')}else if(x.type==='response.created'){text('status','VERA 正在回覆')}else if(x.type==='response.done'){const u=x.response?.usage;if(u)recordUsage(u,x.response?.id);text('status','通話中')}}
+function event(e){let x;try{x=JSON.parse(e.data)}catch{return}const id=x.item_id||x.response_id;
+ if(x.type==='conversation.item.input_audio_transcription.completed'){entry('你',x.transcript,id)}
+ else if(secretaryMode&&x.type==='conversation.item.input_audio_transcription.delta'){entry('你',x.delta,id,true)}
+ else if(x.type==='response.output_audio_transcript.delta'||x.type==='response.audio_transcript.delta'){entry('VERA',x.delta,id,true)}
+ else if(x.type==='response.output_audio_transcript.done'||x.type==='response.audio_transcript.done'){entry('VERA',x.transcript,id)}
+ else if(x.type==='error'){text('callError',x.error?.message||'語音服務發生錯誤')}
+ else if(x.type==='input_audio_buffer.speech_started'){text('status','VERA 正在聆聽')}
+ else if(x.type==='response.created'){text('status','VERA 正在回覆')}
+ else if(x.type==='response.done'){const u=x.response?.usage;if(u)recordUsage(u,x.response?.id);text('status','通話中')}
+ if(secretaryMode&&activeCall&&id){
+  if(x.type==='input_audio_buffer.speech_started')pendingTranscripts.add(id);
+  if(x.type==='conversation.item.input_audio_transcription.completed')pendingTranscripts.delete(id);
+  if(x.type==='conversation.item.input_audio_transcription.failed'){
+   pendingTranscripts.delete(id);activeCall.transcript_partial=true;
+  }
+ }
+}
 function controls(on){window.VeraAndroid?.setInCall?.(on);$('speaker').disabled=!on;$('sendTyped').disabled=true;$('typedMessage').disabled=true;$('previewCall').disabled=on;$('topic').disabled=on;$('micTest').disabled=on;$('start').disabled=on;$('end').disabled=!on;$('mute').disabled=!on;$('summary').disabled=on||!rows.length;$('hero').classList.toggle('active',on)}
-function stop(message='通話已結束'){stopMeter();if(started){const u=read('usage',{seconds:0,input:0,output:0});u.seconds+=(Date.now()-started)/1000;write('usage',u);started=0;showUsage();}window.VeraAndroid?.setSpeaker?.(false);$('speaker').textContent='擴音';epoch++;if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;if(dc){dc.onclose=null;dc.close()}dc=null;if(pc){pc.onconnectionstatechange=null;pc.close()}pc=null;$('remote').srcObject=null;clearInterval(timer);timer=null;busy=false;muted=false;$('mute').textContent='靜音';controls(false);text('status',message);if(sessionId&&rows.length)storeHistory('');sessionId=null}
-function storeHistory(summary){if(!rows.length&&!summary)return;const id=sessionId||lastId||Date.now().toString();lastId=id;const old=histories.find(x=>x.id===id);const r={id,at:new Date(Number(id)).toLocaleString('zh-TW'),topic:sessionTopic,source:sessionSource,rows:rows.map(x=>({...x})),summary:summary||old?.summary||''};histories=[r,...histories.filter(x=>x.id!==id)].slice(0,50);write('history',histories)}
+let activeCall=null, waitingForMic=null, disconnectedTimer=null;
+const pendingTranscripts=new Set();
+function secretarySnapshot(message,partial=false){
+ if(!activeCall)return null;
+ return {...activeCall,topic:sessionTopic,rows:rows.map(row=>({...row})),end_reason:message,
+         transcript_partial:partial||activeCall.transcript_partial||pendingTranscripts.size>0};
+}
+function stop(message='通話已結束',preserve=false){
+ const completed=secretaryMode&&!preserve?secretarySnapshot(message,message!=='通話已結束'):null;
+ stopMeter();
+ if(started){const u=read('usage',{seconds:0,input:0,output:0});u.seconds+=(Date.now()-started)/1000;write('usage',u);started=0;showUsage();}
+ window.VeraAndroid?.setSpeaker?.(false);$('speaker').textContent='擴音';
+ epoch++;stream?.getTracks().forEach(t=>t.stop());stream=null;
+ if(dc){dc.onclose=null;dc.close()}dc=null;
+ if(pc){pc.onconnectionstatechange=null;pc.close()}pc=null;
+ $('remote').srcObject=null;clearInterval(timer);timer=null;clearTimeout(disconnectedTimer);disconnectedTimer=null;
+ busy=false;muted=false;$('mute').textContent='靜音';controls(false);text('status',message);
+ if(sessionId&&rows.length)storeHistory('');
+ activeCall=null;pendingTranscripts.clear();sessionId=null;waitingForMic=null;
+ if(completed)window.veraQueueFinished?.(completed);
+}
+function storeHistory(summary){if(!rows.length&&!summary)return;const id=sessionId||lastId||Date.now().toString();lastId=id;const old=histories.find(x=>x.id===id);const r={id,at:new Date(Number(id)).toLocaleString('zh-TW'),topic:sessionTopic,source:sessionSource,rows:rows.map(x=>({...x})),summary:summary||old?.summary||'',call_id:activeCall?.id||old?.call_id};histories=[r,...histories.filter(x=>x.id!==id)].slice(0,50);write('history',histories)}
 let lastId=null;
 function micError(e){
  const n=e?.name||'',m=e?.message||'';
@@ -93,19 +147,103 @@ $('micTest').onclick=async()=>{
  finally{probe?.getTracks().forEach(t=>t.stop());testingMic=false;$('micTest').disabled=false;$('start').disabled=false;}
 };
 let reconnectUsed=false;
-function lostConnection(){const wasConnected=!!started;const topic=sessionTopic,source=sessionSource;const retry=wasConnected&&!!read('assistantProfile',{}).autoReconnect&&!reconnectUsed&&!document.hidden;stop('連線已中斷');if(retry){reconnectUsed=true;const marker=epoch;text('status','連線中斷，3 秒後重連一次');setTimeout(()=>{if(epoch!==marker||busy||document.hidden||!token())return;$('topic').value=topic;start(true,source)},3000)}}
-async function start(retrying=false,source="manual"){if(retrying!==true)reconnectUsed=false;if(busy||testingMic||verifying||summaryBusy)return;if(!token()){page('settings');return}if(!checkMicPermission())return;if(!navigator.mediaDevices||!window.RTCPeerConnection){text('callError','此裝置不支援安全的 WebRTC 語音連線。');return}
- const my=++epoch;busy=true;sessionId=String(Date.now());lastId=sessionId;sessionTopic=$('topic').value;sessionSource=source;rows=[];rowMap=new Map();$('summaryBox').hidden=true;renderTranscript();controls(true);text('clock','00:00');text('callError','');text('status','連線中…');
+let reconnecting=null;
+function lostConnection(){
+ const topic=sessionTopic,source=sessionSource;
+ const retry=!!started&&!!read('assistantProfile',{}).autoReconnect&&!reconnectUsed&&!document.hidden;
+ const suspended=retry&&secretaryMode?secretarySnapshot('連線已中斷',true):null;
+ stop('連線已中斷',!!suspended);
+ if(!retry)return;
+ reconnectUsed=true;reconnecting=suspended;
+ const marker=epoch;
+ text('status','連線中斷，3 秒後重連一次');
+ setTimeout(()=>{
+  if(epoch!==marker||busy||document.hidden||!token()){
+   if(suspended&&reconnecting===suspended){reconnecting=null;window.veraQueueFinished?.(suspended)}
+   return;
+  }
+  reconnecting=null;$('topic').value=topic;start(true,source,suspended||{});
+ },3000);
+}
+async function start(retrying=false,source="manual",details={}){
+ if(retrying!==true){
+  reconnectUsed=false;
+  if(reconnecting){window.veraQueueFinished?.(reconnecting);reconnecting=null}
+ }
+ if(busy||testingMic||verifying||summaryBusy)return;
+ if(!token()){page('settings');return}
+ if(!navigator.mediaDevices||!window.RTCPeerConnection){text('callError','此裝置不支援安全的 WebRTC 語音連線。');return}
+ if(secretaryMode&&window.VeraAndroid?.hasMicPermission&&!window.VeraAndroid.hasMicPermission()){
+  waitingForMic={retrying,source,details,expires:Date.now()+45000};
+  window.VeraAndroid.askMicPermission();text('callError','請允許麥克風後繼續通話。');return;
+ }
+ if(!secretaryMode&&!checkMicPermission())return;
+ const my=++epoch;busy=true;
+ sessionId=details.history_id||String(Date.now());lastId=sessionId;
+ sessionTopic=$('topic').value;sessionSource=source;rows=details.rows||[];rowMap=new Map();pendingTranscripts.clear();
+ if(secretaryMode)activeCall={id:details.id||crypto.randomUUID(),history_id:sessionId,
+  device_id:details.device_id||'',event_id:details.event_id||'',work_context:details.work_context||'',
+  transcript_partial:!!details.transcript_partial,source};
+ $('summaryBox').hidden=true;renderTranscript();controls(true);text('clock','00:00');text('callError','');text('status','連線中…');
  let phase='mic';try{const s=await captureMic();if(epoch!==my){s.getTracks().forEach(t=>t.stop());return}stream=s;startMeter(s);phase='webrtc';text('status','麥克風已啟動，正在連接 AI…');
  const p=new RTCPeerConnection();pc=p;p.ontrack=e=>{$('remote').srcObject=e.streams[0]||new MediaStream([e.track]);$('remote').play().catch(()=>{})};s.getTracks().forEach(t=>p.addTrack(t,s));
- dc=p.createDataChannel('oai-events');dc.onmessage=event;dc.onopen=()=>{if(epoch!==my)return;text('status','通話中');$('sendTyped').disabled=false;$('typedMessage').disabled=false;started=Date.now();timer=setInterval(()=>{const sec=Math.floor((Date.now()-started)/1000);text('clock',String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0'));const limit=Number(read('callLimit',0));if(limit>0&&sec>=limit*60){stop('已達設定的通話時間上限');if(rows.length)$('summary').click()}},1000);send({type:'response.create'});};dc.onclose=()=>{if(epoch===my)lostConnection()};
- p.onconnectionstatechange=()=>{if(epoch===my&&['failed','closed'].includes(p.connectionState)){text('callError','語音連線中斷，請重新撥打。');lostConnection()}};
+ dc=p.createDataChannel('oai-events');dc.onmessage=event;dc.onopen=()=>{
+  if(epoch!==my)return;
+  text('status','通話中');$('sendTyped').disabled=false;$('typedMessage').disabled=false;started=Date.now();
+  timer=setInterval(()=>{
+   const sec=Math.floor((Date.now()-started)/1000);
+   text('clock',String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0'));
+   if(secretaryMode&&sec%4===0)window.veraCheckpoint?.(secretarySnapshot('通話中斷',true));
+   const limit=Number(read('callLimit',secretaryMode?20:0));
+   if(limit>0&&sec>=limit*60){
+    stop('已達設定的通話時間上限');if(!secretaryMode&&rows.length)$('summary').click();
+   }
+  },1000);
+  if(secretaryMode&&retrying&&rows.length){
+   const previous=rows.slice(-12).map(row=>row.role+'：'+row.text).join('\n').slice(-4000);
+   send({type:'conversation.item.create',item:{type:'message',role:'user',
+      content:[{type:'input_text',text:'剛剛同一通電話因網路中斷，以下是先前對話資料。請簡短接續。\n'+previous}]}});
+  }
+  send({type:'response.create'});
+ };dc.onclose=()=>{if(epoch===my)lostConnection()};
+ p.onconnectionstatechange=()=>{
+  if(epoch!==my)return;
+  clearTimeout(disconnectedTimer);
+  if(['failed','closed'].includes(p.connectionState)){text('callError','語音連線中斷');lostConnection()}
+  else if(secretaryMode&&p.connectionState==='disconnected'){
+   disconnectedTimer=setTimeout(()=>{if(epoch===my&&p.connectionState==='disconnected')lostConnection()},4000);
+  }
+ };
  const offer=await p.createOffer();await p.setLocalDescription(offer);
- phase='api';const j=await api('/api/realtime/call',{sdp:offer.sdp,topic:sessionTopic,source:sessionSource,profile:profileContext()});if(epoch!==my)return;activeModel=j.model||'';await p.setRemoteDescription({type:'answer',sdp:j.sdp});setTimeout(()=>{if(epoch===my&&dc?.readyState!=='open'){text('callError','連線逾時，請檢查網路後再試。');stop('連線失敗')}},30000);
+ phase='api';const j=await api(secretaryMode?'/api/v1/secretary/realtime':'/api/realtime/call',
+  {sdp:offer.sdp,topic:sessionTopic,source:sessionSource,profile:profileContext(),work_context:activeCall?.work_context||''});
+ if(epoch!==my)return;activeModel=j.model||'';await p.setRemoteDescription({type:'answer',sdp:j.sdp});
+ setTimeout(()=>{if(epoch===my&&dc?.readyState!=='open'){text('callError','連線逾時，請檢查網路後再試。');stop('連線失敗')}},30000);
  }catch(e){if(epoch===my){text('callError',phase==='mic'?micError(e):(phase==='api'?'語音 API 連線：':'WebRTC 連線：')+(e.message||String(e)));stop('連線失敗')}}
 }
-$('start').onclick=start;$('end').onclick=()=>{stop();if(rows.length)$('summary').click()};$('mute').onclick=()=>{muted=!muted;stream?.getAudioTracks().forEach(t=>t.enabled=!muted);$('mute').textContent=muted?'解除靜音':'靜音'};
-window.veraBackground=()=>{if(busy)stop('已離開通話畫面');else epoch++};window.addEventListener('pagehide',()=>{if(busy)stop()});
+$('start').onclick=()=>start();
+$('end').onclick=()=>{
+ if(!secretaryMode){stop();if(rows.length)$('summary').click();return}
+ const marker=epoch;
+ stream?.getAudioTracks().forEach(track=>track.stop());
+ $('remote').pause();$('end').disabled=true;
+ text('status','正在保存通話');
+ setTimeout(()=>{if(epoch===marker&&busy)stop()},1100);
+};
+$('mute').onclick=()=>{muted=!muted;stream?.getAudioTracks().forEach(t=>t.enabled=!muted);$('mute').textContent=muted?'解除靜音':'靜音'};
+window.veraBackground=()=>{
+ if(busy)stop('已離開通話畫面');
+ else {epoch++;if(reconnecting){window.veraQueueFinished?.(reconnecting);reconnecting=null}}
+};
+window.addEventListener('pagehide',()=>window.veraBackground());
+if(secretaryMode){
+ window.veraPermissionChanged=allowed=>{
+  const waiting=waitingForMic;waitingForMic=null;
+  if(allowed&&waiting&&Date.now()<waiting.expires&&!document.hidden){
+   start(waiting.retrying,waiting.source,waiting.details);
+  }else text('callError',allowed?'麥克風已允許':'請在手機設定允許 VERA 使用麥克風。');
+ };
+}
 $('summary').onclick=async()=>{if(!rows.length||summaryBusy||busy)return;summaryBusy=true;$('start').disabled=true;$('summary').disabled=true;$('summaryBox').hidden=false;$('summaryText').value='正在整理…';try{const j=await api('/api/summary',{transcript:rows.map(x=>x.role+'：'+x.text).join('\n'),topic:sessionTopic});$('summaryText').value=j.summary;storeHistory(j.summary);if(read('assistantProfile',{}).autoMemory){setTimeout(()=>{if(!busy&&!summaryBusy)proposeMemory(j.summary,false)},100)}}catch(e){$('summaryText').value='摘要產生失敗：'+e.message+'\n\n原始紀錄：\n'+rows.map(x=>x.role+'：'+x.text).join('\n')}finally{summaryBusy=false;$('start').disabled=false;$('summary').disabled=false}};
 $('saveSummary').onclick=()=>{storeHistory($('summaryText').value);alert('已儲存至本機紀錄')};
 function share(t){if(window.VeraAndroid)window.VeraAndroid.share(t);else if(navigator.share)navigator.share({text:t}).catch(()=>{});else if(navigator.clipboard)navigator.clipboard.writeText(t).then(()=>alert('已複製')).catch(()=>alert('請手動複製'))}
@@ -196,7 +334,30 @@ $('speaker').onclick=()=>{const on=$('speaker').textContent==='擴音';if(window
 $('sendTyped').onclick=()=>{const t=$('typedMessage').value.trim();if(!t||dc?.readyState!=='open')return;const id='item_'+crypto.randomUUID().replaceAll('-','');send({type:'conversation.item.create',item:{id,type:'message',role:'user',content:[{type:'input_text',text:t}]}});entry('你',t,id);$('typedMessage').value='';send({type:'response.create'})};
 $('typedMessage').onkeydown=e=>{if(e.key==='Enter'){$('sendTyped').click();e.preventDefault()}};
 let activeModel='';const countedResponses=new Set();
-function recordUsage(u,id){if(id&&countedResponses.has(id))return;if(id)countedResponses.add(id);const totals=read('usage',{seconds:0,input:0,output:0});totals.input=(Number(totals.input)||0)+(Number(u.input_tokens)||0);totals.output=(Number(totals.output)||0)+(Number(u.output_tokens)||0);const i=u.input_token_details,o=u.output_token_details;if(['gpt-realtime','gpt-realtime-2025-08-28','gpt-realtime-1.5'].includes(activeModel)&&i&&o){const n=v=>Math.max(0,Number(v)||0);const ct=n(i.cached_tokens_details?.text_tokens),ca=n(i.cached_tokens_details?.audio_tokens);const cost=(Math.max(0,n(i.text_tokens)-ct)*4+Math.max(0,n(i.audio_tokens)-ca)*32+(ct+ca)*.4+n(o.text_tokens)*16+n(o.audio_tokens)*64)/1e6;totals.estimatedUSD=(Number(totals.estimatedUSD)||0)+cost;totals.pricedResponses=(Number(totals.pricedResponses)||0)+1;}else totals.unpricedResponses=(Number(totals.unpricedResponses)||0)+1;write('usage',totals);showUsage()}
+const voicePrices = {
+ 'gpt-realtime':[4,16,32,64,.4], 'gpt-realtime-2025-08-28':[4,16,32,64,.4],
+ 'gpt-realtime-1.5':[4,16,32,64,.4], 'gpt-realtime-2.1':[4,24,32,64,.4],
+ 'gpt-realtime-2.1-mini':[.6,2.4,10,20,.3]
+};
+function recordUsage(u,id){
+ if(id&&countedResponses.has(id))return;
+ if(id)countedResponses.add(id);
+ const totals=read('usage',{seconds:0,input:0,output:0});
+ totals.input=(Number(totals.input)||0)+(Number(u.input_tokens)||0);
+ totals.output=(Number(totals.output)||0)+(Number(u.output_tokens)||0);
+ const i=u.input_token_details,o=u.output_token_details,rates=voicePrices[activeModel];
+ if(rates&&i&&o){
+  const [textIn,textOut,audioIn,audioOut,cache]=rates;
+  const n=v=>Math.max(0,Number(v)||0);
+  const ct=Math.min(n(i.text_tokens),n(i.cached_tokens_details?.text_tokens));
+  const ca=Math.min(n(i.audio_tokens),n(i.cached_tokens_details?.audio_tokens));
+  const cost=((n(i.text_tokens)-ct)*textIn+(n(i.audio_tokens)-ca)*audioIn+(ct+ca)*cache+
+              n(o.text_tokens)*textOut+n(o.audio_tokens)*audioOut)/1e6;
+  totals.estimatedUSD=(Number(totals.estimatedUSD)||0)+cost;
+  totals.pricedResponses=(Number(totals.pricedResponses)||0)+1;
+ }else totals.unpricedResponses=(Number(totals.unpricedResponses)||0)+1;
+ write('usage',totals);showUsage();
+}
 function showUsage(){const u=read('usage',{seconds:0,input:0,output:0});const info='本機累計 '+Math.round((Number(u.seconds)||0)/60)+' 分鐘 · API 回報輸入 '+(u.input||0)+' / 輸出 '+(u.output||0)+' tokens'+(u.pricedResponses?' · 已取得明細的語音回覆估計 USD '+Number(u.estimatedUSD||0).toFixed(3):' · 尚無可計價的明細')+'（非帳單，不含摘要、轉錄、未知模型及缺失資料）';text('usageNote',info);text('usageSettings',info)}
 $('callLimit').value=String(read('callLimit',0));$('saveCallLimit').onclick=()=>{const n=Number($('callLimit').value);if(!Number.isFinite(n)||n<0||n>120){alert('請輸入 0 至 120 分鐘');return;}write('callLimit',Math.floor(n));alert('已儲存單次通話上限')};
 async function proposeMemory(summary,manual=true){const m=read('assistantProfile',{});if(manual&&!confirm('將本機記憶與目前摘要傳送給 AI 整理？整理結果需確認才會儲存。'))return;const b=$('organizeMemory');if(b.disabled)return;b.disabled=true;try{const j=await api('/api/assistant/organize',{mode:'memory',data:JSON.stringify({memory:m.memory||'',summary:summary||''})});if(confirm('確認以此內容更新本機記憶？\n'+j.text)){m.memory=j.text.slice(0,4000);write('assistantProfile',m);loadProfile()}}catch(e){alert(e.message)}finally{b.disabled=false}}
@@ -230,7 +391,7 @@ async function verifyLogin(automatic=false){
 }
 $('test').onclick=()=>verifyLogin(false);
 $('forget').onclick=()=>{window.VeraAndroid?.cancelAllReminders?.();lastTaskSync=null;deferredReminder='';connectionState('尚未驗證');loginEpoch++;verifying=false;$('test').disabled=false;$('token').disabled=false;if(busy)stop();$('token').value='';let cleared=true;try{if(window.VeraAndroid?.clearVerifiedLogin)cleared=window.VeraAndroid.clearVerifiedLogin()}catch{cleared=false}text('testStatus',cleared?'已登出並清除儲存憑證':'本機憑證清除失敗，請至 Android 設定清除 APP 資料。');};
-$('clear').onclick=()=>{if(confirm('永久清除本機所有通話、記事及任務？')){for(const k of ['history','tasks','notes','assistantProfile','usage','callLimit'])localStorage.removeItem('vera.'+k);histories=[];tasks=[];window.VeraAndroid?.clearCallLog?.();window.VeraAndroid?.cancelAllReminders?.();lastTaskSync=null;deferredReminder='';loadProfile();$('notes').value='';renderHistory();renderTasks()}};
+$('clear').onclick=()=>{if(confirm('永久清除本機所有通話、記事及任務？')){for(const k of ['history','tasks','notes','assistantProfile','usage','callLimit','workOutbox','activeCall']){localStorage.removeItem('vera.'+k);localStorage.removeItem('vera.private.'+k)}window.veraLocalClear?.();histories=[];tasks=[];window.VeraAndroid?.clearCallLog?.();window.VeraAndroid?.cancelAllReminders?.();lastTaskSync=null;deferredReminder='';loadProfile();$('notes').value='';renderHistory();renderTasks()}};
 try{if(window.VeraAndroid?.loadVerifiedLogin)$('token').value=window.VeraAndroid.loadVerifiedLogin()||''}catch{}
 if(token()){page('home');verifyLogin(true)}else page('settings');
 window.veraReadReminder();

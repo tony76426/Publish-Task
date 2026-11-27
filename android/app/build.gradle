@@ -13,7 +13,41 @@ if (firebaseConfig.isFile()) {
 android {
  namespace 'tw.vera.nexus'
  compileSdk 35
- defaultConfig { applicationId 'tw.vera.nexus'; minSdk 26; targetSdk 35; versionCode 9; versionName '0.2.1' }
+ buildFeatures { buildConfig true }
+ defaultConfig {
+   applicationId 'tw.vera.nexus'
+   minSdk 26
+   targetSdk 35
+   versionCode 11
+   versionName '0.3.0'
+   buildConfigField 'String', 'VERA_ORIGIN', '"https://publish-task.onrender.com"'
+ }
+ def qaPort = providers.gradleProperty('veraQaPort').orElse('').get()
+ if (qaPort) {
+   if (!(qaPort ==~ /[0-9]{4,5}/) || !((qaPort as int) in 1024..65535)) {
+     throw new GradleException('veraQaPort must be a valid unprivileged localhost port.')
+   }
+   def qaHost = providers.gradleProperty('veraQaEmulator').orElse('false').get() == 'true' ?
+       '10.0.2.2' : '127.0.0.1'
+   buildTypes {
+     debug { buildConfigField 'String', 'VERA_ORIGIN', '"http://' + qaHost + ':' + qaPort + '"' }
+   }
+ }
+ def signingFile = System.getenv('VERA_SIGNING_FILE')
+ if (signingFile) {
+   signingConfigs {
+     release {
+       storeFile file(signingFile)
+       storePassword System.getenv('VERA_SIGNING_STORE_PASSWORD')
+       keyAlias System.getenv('VERA_SIGNING_ALIAS')
+       keyPassword System.getenv('VERA_SIGNING_KEY_PASSWORD')
+     }
+   }
+   buildTypes {
+     release { signingConfig signingConfigs.release }
+     if (qaPort) debug { signingConfig signingConfigs.release }
+   }
+ }
 }
 
 dependencies {

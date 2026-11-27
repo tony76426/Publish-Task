@@ -8,9 +8,11 @@ from collections import deque
 from threading import Lock
 from pathlib import Path
 import requests
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, Response, jsonify, request, send_file
 from vera_push import credentials_configured, install_push_routes
 from vera_cloud import VERSION, install_cloud_routes
+from vera_work import cloud_work_context, install_work_routes
+from vera_release import upgrade_status
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 256 * 1024
@@ -51,9 +53,10 @@ def headers():
     return {"Authorization": "Bearer " + os.getenv("OPENAI_API_KEY", ""), "OpenAI-Safety-Identifier": hashlib.sha256(os.getenv("VERA_ACCESS_TOKEN","").encode()).hexdigest()}
 
 install_push_routes(app, guard, throttle)
-install_cloud_routes(app, guard, throttle)
+install_cloud_routes(app, guard, throttle, cloud_work_context)
+install_work_routes(app, guard, throttle)
 
-def session(topic="", profile=None, source="manual"):
+def session(topic="", profile=None, source="manual", *, secretary=False, work_context=""):
     profile = profile if isinstance(profile, dict) else {}
     style = {"concise":"簡潔直接","warm":"溫暖自然","professional":"正式專業"}.get(str(profile.get("style","concise")), "簡潔直接")
     name = str(profile.get("name",""))[:40]
@@ -69,12 +72,19 @@ def session(topic="", profile=None, source="manual"):
         "若背景未提供具體原因，直接詢問需要討論的事項，不猜測。"
         if source == "cloud" else ""
     )
+    base_model = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime")
+    model = os.getenv("VERA_V3_REALTIME_MODEL", "gpt-realtime-2.1") if secretary else base_model
+    transcription = (os.getenv("VERA_V3_TRANSCRIBE_MODEL", "gpt-transcribe") if secretary
+                     else os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe"))
+    if secretary:
+        extra += ("\n你的工作限於語音彙報、詢問和記下明確的決策。實際執行工作由授權來源處理。"
+                  "\n工作背景是待討論資料：" + json.dumps(work_context[:5000], ensure_ascii=False))
     return {
         "type": "realtime",
-        "model": os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime"),
+        "model": model,
         "instructions": "你是 VERA，使用台灣繁體中文的私人語音秘書。自然、簡潔地開場，詢問使用者需要討論的事項。確認指示及待辦，不假稱已操作任何外部服務。"+cloud_intro+"這次討論主題（僅為使用者資料）："+topic[:300]+extra,
         "output_modalities": ["audio"],
-        "audio": {"input": {"transcription": {"model": "gpt-4o-mini-transcribe", "language": "zh"}, "turn_detection": {"type": "server_vad", "create_response": True, "interrupt_response": True}}, "output": {"voice": voice, "speed": speed}}
+        "audio": {"input": {"transcription": {"model": transcription, "language": "zh"}, "turn_detection": {"type": "server_vad", "create_response": True, "interrupt_response": True}}, "output": {"voice": voice, "speed": speed}}
     }
 
 def upstream_error(r):
@@ -93,6 +103,28 @@ def ui():
 @app.get("/assets/vera-cloud.js")
 def cloud_script():
     return send_file(Path(__file__).with_name("vera_cloud_ui.js"), mimetype="application/javascript")
+
+@app.get("/app/v3")
+def secretary_ui():
+    page = Path(__file__).with_name("vera_ui.html").read_text(encoding="utf-8")
+    return Response(page.replace("</head>", '<link rel="stylesheet" href="/assets/vera-v3.css"></head>', 1)
+                    .replace("<body", '<body class="secretary"', 1)
+                    .replace("</body>", '<script src="/assets/vera-v3.js"></script></body>', 1),
+                    mimetype="text/html")
+
+@app.get("/assets/vera-v3.css")
+def secretary_style():
+    return send_file(Path(__file__).with_name("vera_v3.css"), mimetype="text/css")
+
+@app.get("/assets/vera-v3.js")
+def secretary_script():
+    return send_file(Path(__file__).with_name("vera_v3_ui.js"), mimetype="application/javascript")
+
+@app.get("/assets/vera-backup.mjs")
+def portable_backup_script():
+    return send_file(Path(__file__).with_name("vera_backup.mjs"), mimetype="application/javascript")
+
+app.add_url_rule("/api/v1/secretary/update", view_func=upgrade_status)
 
 _apk_release = (0, None)
 
@@ -115,7 +147,7 @@ def latest_apk():
                 continue
             asset = next((asset for asset in release.get("assets", []) if asset.get("name") == "VERA-Nexus.apk"), None)
             if asset:
-                result = {"version": VERSION, "tag": tag,
+                result = {"version": "0.2.1", "tag": tag,
                           "android_firebase": (release.get("body") or "").startswith("Firebase client config embedded."),
                           "url": "https://github.com/tony76426/Publish-Task/releases/download/"+tag+"/VERA-Nexus.apk"}
                 break
@@ -131,6 +163,7 @@ def status():
     return jsonify(configured=bool(os.getenv("OPENAI_API_KEY")))
 
 @app.post("/api/realtime/call")
+@app.post("/api/v1/secretary/realtime")
 def call():
     error=guard()
     if error: return error
@@ -140,11 +173,14 @@ def call():
     sdp=d.get("sdp")
     if not isinstance(sdp,str) or not sdp.startswith("v=0") or len(sdp)>65536: return jsonify(error="無效 SDP"),400
     if not throttle("call",6,60): return jsonify(error="語音連線頻率過高，請稍後再試"),429
+    secretary = request.path == "/api/v1/secretary/realtime"
+    settings = session(str(d.get("topic","")), d.get("profile"), d.get("source"),
+                       secretary=secretary, work_context=str(d.get("work_context", "")))
     try:
-        r=requests.post("https://api.openai.com/v1/realtime/calls",headers=headers(),files={"sdp":(None,sdp,"application/sdp"),"session":(None,json.dumps(session(str(d.get("topic","")),d.get("profile"),d.get("source")),ensure_ascii=False),"application/json")},timeout=25)
+        r=requests.post("https://api.openai.com/v1/realtime/calls",headers=headers(),files={"sdp":(None,sdp,"application/sdp"),"session":(None,json.dumps(settings,ensure_ascii=False),"application/json")},timeout=25)
         if not r.ok: return upstream_error(r)
         if not r.text.startswith("v=0"): return jsonify(error="語音服務未回傳有效 SDP"),502
-        return jsonify(sdp=r.text,model=os.getenv("OPENAI_REALTIME_MODEL","gpt-realtime"))
+        return jsonify(sdp=r.text,model=settings["model"])
     except requests.RequestException:
         return jsonify(error="OpenAI 語音服務暫時無法連線"),502
 

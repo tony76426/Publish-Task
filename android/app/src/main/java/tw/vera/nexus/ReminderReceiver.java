@@ -46,12 +46,24 @@ public final class ReminderReceiver extends BroadcastReceiver {
  static void ring(Context c,String kind,boolean retry){ring(c,kind,retry,"");}
  static synchronized void ring(Context c,String kind,boolean retry,String event){SharedPreferences p=prefs(c);long old=p.getLong("active",0);if(inCall){record(c,kind,"busy",System.currentTimeMillis());PushEnrollment.report(c,event,"busy");return;}if(old>0){if(active(c,old)){record(c,kind,"busy",System.currentTimeMillis());PushEnrollment.report(c,event,"busy");return;}finishCall(c,old,"missed");}long now=System.currentTimeMillis();if(!allowedTime(c,now)){record(c,kind,"quiet",now);PushEnrollment.report(c,event,"quiet");return;}channel(c);if(!notifyAllowed(c)){record(c,kind,"blocked",now);PushEnrollment.report(c,event,"blocked");return;}p.edit().putLong("active",now).putString("activeKind",kind).putString("activeEvent",event).putBoolean("activeRetry",retry).commit();
  Intent i=new Intent(c,IncomingActivity.class).putExtra("id",now);PendingIntent open=PendingIntent.getActivity(c,901,i,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);Intent decline=new Intent(c,ReminderReceiver.class).setAction(DECLINE).putExtra("id",now);PendingIntent no=PendingIntent.getBroadcast(c,902,decline,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
- Notification.Builder b=new Notification.Builder(c,channelId(c)).setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("VERA 主動聯繫").setContentText("test".equals(kind)?"測試來電":"你的 AI 秘書有事項需要討論").setVisibility(Notification.VISIBILITY_PRIVATE).setCategory(Notification.CATEGORY_CALL).setContentIntent(open).setDeleteIntent(no).setOngoing(true).setTimeoutAfter(RING_MS).addAction(new Notification.Action.Builder(null,"接聽畫面",open).build()).addAction(new Notification.Action.Builder(null,"拒絕",no).build());
+  Notification.Builder b=new Notification.Builder(c,channelId(c)).setSmallIcon(R.drawable.vera)
+    .setContentTitle("VERA 來電").setContentText(kind.endsWith("test")?"測試來電":"有事項待討論")
+    .setVisibility(Notification.VISIBILITY_PRIVATE).setCategory(Notification.CATEGORY_CALL).setContentIntent(open)
+    .setDeleteIntent(no).setOngoing(true).setTimeoutAfter(RING_MS);
+  if(Build.VERSION.SDK_INT>=31){
+   Intent answer=new Intent(c,IncomingActivity.class).putExtra("id",now).putExtra("answer",true);
+   PendingIntent yes=PendingIntent.getActivity(c,903,answer,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+   Person caller=new Person.Builder().setName("VERA").setImportant(true).build();
+   b.setStyle(Notification.CallStyle.forIncomingCall(caller,no,yes));
+  }else{
+   b.addAction(new Notification.Action.Builder(null,"查看來電",open).build());
+   b.addAction(new Notification.Action.Builder(null,"拒絕",no).build());
+  }
  if(p.getBoolean("fullscreen",false)&&fullAllowed(c))b.setFullScreenIntent(open,true);
  Notification n=b.build();n.flags|=Notification.FLAG_INSISTENT;NotificationManager nm=c.getSystemService(NotificationManager.class);try{if(nm==null){finishCall(c,now,"failed");return;}nm.notify(ID,n);PushEnrollment.report(c,event,"ringing");schedule(c,TIMEOUT,now+RING_MS+1000);}catch(RuntimeException e){finishCall(c,now,"failed");}
  }
  @Override public void onReceive(Context c,Intent i){String a=i.getAction();if(a==null)return;SharedPreferences p=prefs(c);
- if(Intent.ACTION_BOOT_COMPLETED.equals(a)||Intent.ACTION_MY_PACKAGE_REPLACED.equals(a)||Intent.ACTION_TIME_CHANGED.equals(a)||Intent.ACTION_TIMEZONE_CHANGED.equals(a)||AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED.equals(a)){if(p.getBoolean("enabled",false))reschedule(c);long retryAt=p.getLong("retryAt",0);if(retryAt>System.currentTimeMillis())schedule(c,RETRY,retryAt);scheduleTask(c);return;}
+  if(Intent.ACTION_BOOT_COMPLETED.equals(a)||Intent.ACTION_MY_PACKAGE_REPLACED.equals(a)||Intent.ACTION_TIME_CHANGED.equals(a)||Intent.ACTION_TIMEZONE_CHANGED.equals(a)||AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED.equals(a)){if(p.getBoolean("enabled",false))reschedule(c);long retryAt=p.getLong("retryAt",0);if(retryAt>System.currentTimeMillis())schedule(c,RETRY,retryAt);scheduleTask(c);if(Intent.ACTION_BOOT_COMPLETED.equals(a)||Intent.ACTION_MY_PACKAGE_REPLACED.equals(a))PushEnrollment.refresh(c);return;}
  if(DECLINE.equals(a)){finishCall(c,i.getLongExtra("id",0),"declined");return;}
  if(TIMEOUT.equals(a)){long id=p.getLong("active",0);if(id>0&&!active(c,id))finishCall(c,id,"missed");return;}
  if(DAILY.equals(a)){if(!p.getBoolean("enabled",false))return;reschedule(c);ring(c,"daily",false);return;}

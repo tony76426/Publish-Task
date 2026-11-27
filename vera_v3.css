@@ -1,0 +1,194 @@
+/* Shared palette for the VERA secretary pages and the phone's native call screen. */
+.secretary {
+  --paper:#faf8f1;
+  --panel:#fffdf8;
+  --beige:#efeadf;
+  --sage:#3e5648;
+  --sage-light:#e0e8dd;
+  --gold:#d8bf86;
+  --ink:#292e29;
+  --muted:#535d54;
+  --edge:#deddd1;
+  margin:0;
+  color:var(--ink);
+  background:var(--paper);
+  font:16px/1.55 "Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;
+}
+.secretary * { box-sizing:border-box; }
+.secretary [hidden] { display:none!important; }
+.secretary main { max-width:780px; padding:16px 16px 108px; }
+.secretary header {
+  gap:12px;
+  margin:0 0 18px;
+  padding:0 0 13px;
+  border-bottom:1px solid var(--edge);
+}
+.secretary .logo { width:40px; height:40px; background:var(--beige); border-radius:13px; padding:5px; }
+.secretary .logo svg { filter:grayscale(1) sepia(.25); }
+.secretary .brand,.secretary h1,.secretary h2,.secretary h3 { color:var(--ink); letter-spacing:0; }
+.secretary .brand { font:700 1.28rem/1.1 system-ui,sans-serif; }
+.secretary h1 { font-size:clamp(1.65rem,7vw,2.5rem); line-height:1.15; }
+.secretary h2 { margin:0 0 .6rem; font-size:1.19rem; line-height:1.35; }
+.secretary p { margin:.45rem 0; }
+.secretary small,.secretary .muted,.secretary .desk-head p,.secretary .desk-footnote {
+  color:var(--muted);
+  font-size:.9rem;
+}
+.secretary #splash { background:var(--paper); color:var(--ink); }
+.secretary #hero {
+  padding:24px 15px 20px;
+  border:1px solid #dbd8c5;
+  background:radial-gradient(ellipse at 50% 5%,#eee2c6 0%,#eceddf 52%,#e8eee5 100%);
+  color:var(--ink);
+  box-shadow:none;
+  border-radius:25px;
+}
+.secretary #hero strong,.secretary #hero .muted,.secretary #hero #status { color:var(--ink); }
+.secretary #hero .orb { width:128px; height:128px; border:3px solid var(--panel); box-shadow:0 6px 18px #3e56482a; }
+.secretary #hero.active .orb { outline:2px solid var(--sage); outline-offset:6px; }
+.secretary .wave i { background:var(--sage); }
+.secretary .card,.secretary .desk-dialog,.secretary .desk-item,.secretary .desk-empty {
+  border:1px solid var(--edge);
+  background:var(--panel);
+  color:var(--ink);
+  box-shadow:none;
+  border-radius:18px;
+}
+.secretary .card { padding:16px; margin-bottom:12px; }
+.secretary .card .card { margin:14px 0 0; background:var(--paper); }
+.secretary label { color:var(--ink); font-size:.94rem; font-weight:600; }
+.secretary input:not([type="checkbox"]),.secretary textarea,.secretary select {
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  min-height:46px;
+  border:1px solid #cfcfc2;
+  background:#fffefb;
+  color:var(--ink);
+  border-radius:10px;
+  font:inherit;
+}
+.secretary input[type="checkbox"] { accent-color:var(--sage); width:1.15em; height:1.15em; }
+.secretary button,.secretary #cloud button {
+  color:white;
+  background:var(--sage);
+  border:1px solid transparent;
+  border-radius:11px;
+  min-width:0;
+  min-height:46px;
+  padding:.65rem .75rem;
+  box-shadow:none;
+  font-size:.94rem;
+  line-height:1.25;
+  word-break:keep-all;
+  white-space:normal;
+}
+.secretary button.secondary,.secretary #cloud button.secondary,.secretary .desk-link,.secretary .desk-close {
+  color:var(--ink);
+  background:var(--beige);
+  border-color:#e0dacc;
+}
+.secretary button.danger { background:#7a4d40; color:#fff9f3; }
+.secretary button:disabled { opacity:.57; }
+.secretary :is(button,input,textarea,select):focus-visible {
+  outline:2px solid var(--sage);
+  outline-offset:3px;
+}
+.secretary .actions,.secretary .secretary-actions,.secretary .formrow {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(min(124px,100%),1fr));
+  gap:8px;
+  align-items:end;
+}
+.secretary #hero .actions { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.secretary #hero #start { background:var(--sage); color:white; }
+.secretary #connectionPill,.secretary .pill { background:var(--beige); border-color:var(--edge); color:var(--ink); font-size:.82rem; }
+.secretary #connectionPill.ok,.secretary .pill.ok { background:var(--sage-light); color:#294238; }
+.secretary #cloud .cloud-banner { background:#e9e9dc; color:var(--ink); border-color:#dcd8c5; }
+.secretary #cloud .cloud-banner .muted,.secretary #cloud .cloud-grid dt { color:var(--muted); }
+.secretary #cloud .cloud-kicker,.secretary .desk-kicker { display:none; }
+.secretary #cloud .cloud-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.secretary #cloud .cloud-grid div { background:var(--paper); border-color:var(--edge); }
+.secretary #cloud .cloud-grid dd { color:var(--ink); line-height:1.4; font-size:.94rem; }
+.secretary #cloud .cloud-entry p { color:var(--muted); }
+.secretary #cloud .actions { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.secretary .desk-hero,.secretary .desk-stats div {
+  background:var(--sage-light);
+  color:var(--ink);
+  border:1px solid #d5ded2;
+  box-shadow:none;
+}
+.secretary .desk-hero p,.secretary .desk-stats small,.secretary .desk-item-meta { color:var(--muted); }
+.secretary .desk-filters button { background:var(--beige); color:var(--ink); }
+.secretary .desk-filters button.selected { background:var(--sage); color:white; }
+.secretary .desk-add,.secretary .desk-close { width:46px; height:46px; }
+.secretary .desk-search { margin-bottom:10px; }
+.secretary .entry { background:var(--paper); border-color:var(--edge); color:var(--ink); }
+.secretary .entry b,.secretary .desk-item-title,.secretary .desk-item-meta span { color:var(--ink); }
+.secretary #incoming { background:#3a443eba; }
+.secretary .incomingInner { color:var(--ink); background:var(--paper); border:1px solid var(--edge); box-shadow:none; }
+.secretary .incomingLogo { color:var(--sage); }
+.secretary .incomingPortrait { border-color:var(--gold); }
+.secretary .incomingInner p { color:var(--ink); }
+.secretary .nav {
+  padding:7px max(6px,env(safe-area-inset-left)) max(7px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-right));
+  display:grid;
+  grid-template-columns:repeat(5,minmax(0,1fr));
+  gap:3px;
+  border-top:1px solid var(--edge);
+  background:var(--panel);
+  box-shadow:none;
+}
+.secretary .nav button {
+  min-height:44px;
+  padding:.55rem .15rem;
+  font-size:clamp(.78rem,3.2vw,.92rem);
+  background:transparent;
+  color:var(--muted);
+  white-space:nowrap;
+}
+.secretary .nav button.sel { background:var(--sage-light); color:#253e31; }
+.secretary .secretary-item {
+  padding:11px 0;
+  border-top:1px solid var(--edge);
+  overflow-wrap:anywhere;
+}
+.secretary .secretary-item p { white-space:pre-wrap; color:var(--muted); }
+.secretary .secretary-item button { margin:4px 8px 2px 0; }
+.secretary .secretary-item .secretary-item { margin-top:4px; padding:7px 0; }
+.secretary .secretary-panel form { padding-top:10px; border-top:1px solid var(--edge); margin-top:12px; }
+.secretary .secretary-check { display:flex; align-items:center; gap:8px; min-height:44px; }
+.secretary .secretary-check input { flex:none; }
+.secretary .secretary-status:empty { display:none; }
+.secretary .settings-group {
+  margin:0 0 12px;
+  background:var(--panel);
+  border:1px solid var(--edge);
+  border-radius:15px;
+}
+.secretary .settings-group > summary {
+  padding:13px 16px;
+  color:var(--ink);
+  min-height:48px;
+  font-weight:650;
+  cursor:pointer;
+}
+.secretary .settings-group[open] > summary { border-bottom:1px solid var(--edge); }
+.secretary .settings-group > .card {
+  border:0;
+  margin:0;
+  background:transparent;
+}
+.secretary #home > .card:not(#hero),.secretary #history > .card { content-visibility:auto; contain-intrinsic-size:auto 190px; }
+.secretary .secretary-item > strong { display:block; font-size:1.01rem; line-height:1.4; }
+.secretary #v3ScheduleTask,.secretary #v3CallList .secretary-item > strong { overflow-wrap:anywhere; }
+.secretary #v3WorkWhen { max-inline-size:100%; }
+.secretary #hero #start { box-shadow:0 5px 15px #243c2e24; }
+@media (min-width:560px) {
+  .secretary main { padding:25px 24px 110px; }
+  .secretary .card { padding:20px; }
+  .secretary #cloud .cloud-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+}
+@media (prefers-reduced-motion:reduce) {
+  .secretary *, .secretary *::before, .secretary *::after { animation-duration:.01ms!important;transition-duration:.01ms!important; }
+}

@@ -1,26 +1,185 @@
 package tw.vera.nexus;
-import android.app.*;
-import android.content.*;
+
+import android.app.Activity;
+import android.app.KeyguardManager;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
-import android.os.*;
-import android.view.*;
-import android.widget.*;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.Gravity;
+import android.view.View;
+import android.view.WindowManager;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import java.util.UUID;
 
 public final class IncomingActivity extends Activity {
- private long id;private final Handler timer=new Handler(Looper.getMainLooper());
- private TextView label;
- private final Runnable tick=new Runnable(){public void run(){if(!ReminderReceiver.active(IncomingActivity.this,id)){ReminderReceiver.finishCall(IncomingActivity.this,id,"missed");finish();return;}label.setText("VERA 主動聯繫 · "+Math.max(1,(id+ReminderReceiver.RING_MS-System.currentTimeMillis()+999)/1000)+" 秒");timer.postDelayed(this,500);}};
- @Override public void onCreate(Bundle b){super.onCreate(b);id=getIntent().getLongExtra("id",0);if(!ReminderReceiver.active(this,id)){finish();return;}if(Build.VERSION.SDK_INT>=27){setShowWhenLocked(true);setTurnScreenOn(true);}else getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED|WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
- LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setGravity(Gravity.CENTER);root.setPadding(30,30,30,30);root.setBackgroundColor(Color.rgb(19,41,66));setContentView(root);
- TextView brand=new TextView(this);brand.setText("V E R A");brand.setTextColor(Color.WHITE);brand.setTextSize(38);brand.setGravity(Gravity.CENTER);root.addView(brand);
- ImageView image=new ImageView(this);image.setImageResource(R.drawable.vera);LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(220,220);ip.topMargin=40;ip.bottomMargin=35;root.addView(image,ip);
- label=new TextView(this);label.setTextColor(Color.WHITE);label.setTextSize(21);label.setGravity(Gravity.CENTER);root.addView(label);
- TextView info=new TextView(this);info.setText(ReminderReceiver.prefs(this).getString("activeEvent","").isEmpty()?"AI 私人秘書 · 本機來電提醒":"AI 私人秘書 · 雲端來電提醒");info.setTextColor(Color.rgb(191,209,228));info.setGravity(Gravity.CENTER);root.addView(info);
- LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.CENTER);LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(-1,-2);ap.topMargin=45;root.addView(actions,ap);
- Button no=new Button(this);no.setText("拒絕");Button yes=new Button(this);yes.setText("接聽");actions.addView(no,new LinearLayout.LayoutParams(0,-2,1));actions.addView(yes,new LinearLayout.LayoutParams(0,-2,1));no.setOnClickListener(v->{ReminderReceiver.finishCall(this,id,"declined");finish();});yes.setOnClickListener(v->accept());timer.post(tick);
- }
- private void accept(){if(!ReminderReceiver.active(this,id)){finish();return;}KeyguardManager k=getSystemService(KeyguardManager.class);if(Build.VERSION.SDK_INT>=26&&k!=null&&k.isKeyguardLocked()){k.requestDismissKeyguard(this,new KeyguardManager.KeyguardDismissCallback(){public void onDismissSucceeded(){open();}});}else open();}
- private void open(){if(!ReminderReceiver.active(this,id)){finish();return;}String kind=ReminderReceiver.prefs(this).getString("activeKind","daily");String event=ReminderReceiver.prefs(this).getString("activeEvent","");String nonce=java.util.UUID.randomUUID().toString();ReminderReceiver.prefs(this).edit().putString("acceptNonce",nonce).putString("acceptEvent",event).commit();ReminderReceiver.finishCall(this,id,"opened");startActivity(new Intent(this,MainActivity.class).setAction(ReminderReceiver.OPEN).putExtra("reminder_kind",kind).putExtra("accept_nonce",nonce).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP));finish();}
- @Override public void onBackPressed(){ReminderReceiver.finishCall(this,id,"declined");finish();}
- @Override protected void onDestroy(){timer.removeCallbacksAndMessages(null);super.onDestroy();}
+    private static final int INK = Color.rgb(39, 46, 40);
+    private static final int MUTED = Color.rgb(85, 97, 88);
+    private static final int PAPER = Color.rgb(250, 248, 240);
+    private static final int SAGE = Color.rgb(58, 81, 68);
+    private final Handler timer = new Handler(Looper.getMainLooper());
+    private long id;
+    private TextView remaining, status;
+    private Button answer;
+    private boolean unlocking;
+    private final Runnable tick = new Runnable() {
+        @Override public void run() {
+            if (!ReminderReceiver.active(IncomingActivity.this, id)) {
+                ReminderReceiver.finishCall(IncomingActivity.this, id, "missed");
+                finish();
+                return;
+            }
+            long seconds = Math.max(1, (id + ReminderReceiver.RING_MS - System.currentTimeMillis() + 999) / 1000);
+            remaining.setText(seconds + " 秒");
+            timer.postDelayed(this, 1000);
+        }
+    };
+
+    @Override public void onCreate(Bundle state) {
+        super.onCreate(state);
+        id = getIntent().getLongExtra("id", 0);
+        if (!ReminderReceiver.active(this, id)) { finish(); return; }
+        if (Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(true);
+            setTurnScreenOn(true);
+        } else {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                    | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+        }
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        getWindow().setStatusBarColor(PAPER);
+        getWindow().setNavigationBarColor(PAPER);
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+                | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+        buildScreen();
+        timer.post(tick);
+        if (getIntent().getBooleanExtra("answer", false)) timer.post(this::accept);
+    }
+
+    private void buildScreen() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(PAPER);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setGravity(Gravity.CENTER);
+        root.setPadding(dp(24), dp(48), dp(24), dp(48));
+        scroll.addView(root);
+        setContentView(scroll);
+
+        TextView monogram = label("V", 44, SAGE);
+        GradientDrawable emblem = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{Color.rgb(235, 220, 184), Color.rgb(223, 230, 217)});
+        emblem.setShape(GradientDrawable.OVAL);
+        monogram.setBackground(emblem);
+        root.addView(monogram, new LinearLayout.LayoutParams(dp(94), dp(94)));
+        TextView title = label("VERA 來電", 36, INK);
+        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        append(root, title, 24);
+        SharedPreferences prefs = ReminderReceiver.prefs(this);
+        String kind = prefs.getString("activeKind", "");
+        String subtitle = kind.endsWith("test") ? "測試來電"
+                : (prefs.getString("activeEvent", "").isEmpty() ? "本機提醒" : "私人語音秘書");
+        append(root, label(subtitle, 17, MUTED), 6);
+        remaining = label("", 15, MUTED);
+        append(root, remaining, 12);
+        status = label("", 15, MUTED);
+        status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        append(root, status, 10);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.CENTER);
+        append(root, actions, 34);
+        Button decline = action("拒絕", Color.rgb(233, 221, 208), INK);
+        answer = action("接聽", SAGE, Color.WHITE);
+        LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(0, dp(62), 1);
+        left.setMarginEnd(dp(12));
+        actions.addView(decline, left);
+        actions.addView(answer, new LinearLayout.LayoutParams(0, dp(62), 1));
+        decline.setOnClickListener(v -> decline());
+        answer.setOnClickListener(v -> accept());
+    }
+
+    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+
+    private TextView label(String text, int size, int color) {
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextSize(size);
+        view.setTextColor(color);
+        view.setGravity(Gravity.CENTER);
+        return view;
+    }
+
+    private void append(LinearLayout root, View view, int gap) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.topMargin = dp(gap);
+        root.addView(view, params);
+    }
+
+    private Button action(String label, int fill, int text) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setTextSize(18);
+        button.setAllCaps(false);
+        button.setTextColor(text);
+        button.setBackgroundTintList(ColorStateList.valueOf(fill));
+        return button;
+    }
+
+    private void decline() {
+        ReminderReceiver.finishCall(this, id, "declined");
+        finish();
+    }
+
+    private void accept() {
+        if (unlocking) return;
+        if (!ReminderReceiver.active(this, id)) { finish(); return; }
+        KeyguardManager lock = getSystemService(KeyguardManager.class);
+        if (lock == null || !lock.isKeyguardLocked()) { open(); return; }
+        unlocking = true;
+        answer.setEnabled(false);
+        status.setText("解鎖手機後繼續");
+        lock.requestDismissKeyguard(this, new KeyguardManager.KeyguardDismissCallback() {
+            @Override public void onDismissSucceeded() { open(); }
+            @Override public void onDismissCancelled() { retryUnlock(); }
+            @Override public void onDismissError() { retryUnlock(); }
+        });
+    }
+
+    private void retryUnlock() {
+        unlocking = false;
+        answer.setEnabled(true);
+        status.setText("請解鎖手機並接聽");
+    }
+
+    private void open() {
+        if (!ReminderReceiver.active(this, id)) { finish(); return; }
+        SharedPreferences prefs = ReminderReceiver.prefs(this);
+        String kind = prefs.getString("activeKind", "daily");
+        String event = prefs.getString("activeEvent", "");
+        String nonce = UUID.randomUUID().toString();
+        if (!prefs.edit().putString("acceptNonce", nonce).putString("acceptEvent", event).commit()) {
+            retryUnlock();
+            status.setText("無法保存接聽，請再試一次");
+            return;
+        }
+        ReminderReceiver.finishCall(this, id, "opened");
+        startActivity(new Intent(this, MainActivity.class).setAction(ReminderReceiver.OPEN)
+                .putExtra("reminder_kind", kind).putExtra("accept_nonce", nonce)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+        finish();
+    }
+
+    @Override public void onBackPressed() { decline(); }
+    @Override protected void onDestroy() { timer.removeCallbacksAndMessages(null); super.onDestroy(); }
 }
