@@ -31,7 +31,7 @@ jobs:
       - name: Compile and run isolated backend tests
         run: |
           python -m py_compile vera_app.py vera_cloud.py vera_push.py vera_work.py vera_db_backup.py vera_release.py gunicorn.conf.py app.py
-          python -m unittest -v test_vera_push test_vera_cloud test_vera_work test_vera_preupgrade
+          python -m unittest -v test_vera_push test_vera_cloud test_vera_work test_vera_preupgrade test_vera_release_gate
       - name: Validate bridge and encrypted backup tests
         run: |
           node --check vera_cloud_ui.js
