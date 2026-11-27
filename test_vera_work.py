@@ -241,3 +241,54 @@ class WorkTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class AutoCallTest(unittest.TestCase):
+    def setUp(self):
+        WorkTest.setUp(self)
+        self.owner_base = "/api/v1/secretary"
+        self.source_base = "/api/v1/work"
+        self.submit = WorkTest.submit.__get__(self)
+        self.enroll = WorkTest.enroll.__get__(self)
+        self.enroll()
+        self.policy = self.owner_base + "/auto-call"
+        self.now = 1795924800  # fixture only; scheduling times computed in Taiwan
+        self.clock = patch("vera_work.time.time", return_value=self.now)
+        self.clock.start()
+        self.addCleanup(self.clock.stop)
+        self.creds = patch("vera_work.credentials_configured", return_value=True)
+        self.creds.start()
+        self.addCleanup(self.creds.stop)
+        from vera_auto import day_bounds
+        self.day = day_bounds(self.now)[1]
+
+    def authorize(self, enabled=True):
+        return self.client.put(self.policy,headers=self.auth,json={
+            "enabled":enabled,"device_id":self.device,"return_result":False})
+
+    def request_call(self, work, due):
+        return self.client.post(self.source_base+"/tasks/"+work["id"]+"/request-call",
+                                headers=self.source,json={"due_at":due})
+
+    def test_default_denial_window_limit_and_idempotency(self):
+        a,b,c = [self.submit("auto:"+str(i)).json for i in range(3)]
+        due = self.day+12*3600
+        self.assertEqual(self.request_call(a,due).status_code,403)
+        self.assertEqual(self.client.put(self.policy,headers=self.source,json={"enabled":True}).status_code,401)
+        self.assertEqual(self.authorize().status_code,200)
+        self.assertEqual(self.request_call(a,self.day+9*3600).status_code,400)
+        self.assertEqual(self.request_call(a,self.day+23*3600+59*60).status_code,400)
+        first = self.request_call(a,due)
+        self.assertEqual(first.status_code,202)
+        self.assertEqual(self.request_call(a,due).json["event_id"],first.json["event_id"])
+        self.assertEqual(self.request_call(b,due).status_code,202)
+        self.assertEqual(self.request_call(c,due).status_code,429)
+
+    def test_revocation_cancels_queue_and_prevents_dispatch(self):
+        self.assertEqual(self.authorize().status_code,200)
+        a=self.submit("auto:revoke").json
+        due=self.day+12*3600
+        self.assertEqual(self.request_call(a,due).status_code,202)
+        self.assertEqual(self.authorize(False).status_code,200)
+        with patch("vera_cloud.send_fcm") as send:
+            self.assertFalse(dispatch_due(logging.getLogger(),due))
+            send.assert_not_called()

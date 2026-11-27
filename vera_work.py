@@ -17,6 +17,7 @@ from flask import jsonify, request
 
 from vera_cloud import DAY, record, schema as cloud_schema
 from vera_push import DEVICE_LIFETIME, credentials_configured, registry, valid_id
+from vera_auto import auto_schema, auto_policy, day_bounds, permitted, MAX_DAILY
 
 
 class WorkError(Exception):
@@ -291,6 +292,70 @@ def install_work_routes(app, owner_guard, throttle):
                 raise WorkError(409, "這項工作已結束")
             activate_new_work(db, task_id, device, event, due, retry, deliver, now)
         return jsonify(event_id=event, state="queued"), 202
+
+    @app.route("/api/v1/secretary/auto-call", methods=["GET", "PUT"])
+    def owner_auto_call():
+        authorized()
+        with work_db() as db:
+            enabled, chosen, deliver = auto_policy(db)
+            if request.method == "PUT":
+                data = body_json()
+                enabled = data.get("enabled")
+                deliver = data.get("return_result", False)
+                if type(enabled) is not bool or type(deliver) is not bool:
+                    raise WorkError(400, "自動聯繫授權格式無效")
+                chosen = data.get("device_id", "") if enabled else ""
+                if enabled and (not valid_id(chosen) or not db.execute(
+                    "SELECT 1 FROM devices WHERE id=? AND updated>=?",
+                    (chosen, int(time.time()) - DEVICE_LIFETIME)).fetchone()):
+                    raise WorkError(400, "請使用已註冊的本機裝置授權")
+                # Any policy change cancels queued source calls; an old grant cannot be reused.
+                cloud_schema(db)
+                now = int(time.time())
+                if (enabled, chosen, deliver) != auto_policy(db):
+                    events = db.execute("""UPDATE cloud_calls SET state='cancelled',changed=?
+                        WHERE state='queued' AND id IN (SELECT event FROM vera_auto_requests)
+                        RETURNING id""", (now,)).fetchall()
+                    for item in events:
+                        record(db, item[0], "cancelled", now)
+                db.execute("""INSERT INTO vera_auto_policy VALUES(1,?,?,?)
+                    ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,device=excluded.device,
+                    deliver=excluded.deliver""", (int(enabled), chosen, int(deliver)))
+            return jsonify(enabled=enabled, device_id=chosen, return_result=deliver,
+                           timezone="Asia/Taipei", start="10:00", end="24:00", daily_limit=MAX_DAILY)
+
+    @app.post("/api/v1/work/tasks/<uuid:task_id>/request-call")
+    def source_request_call(task_id):
+        key = authorized(source=True)
+        data = body_json()
+        if set(data) != {"due_at"}:
+            raise WorkError(400, "只能指定聯繫時間")
+        now = int(time.time())
+        due = integer(data["due_at"], now, now + 7 * DAY)
+        task_id = str(task_id)
+        if not permitted(due):
+            raise WorkError(400, "僅允許台灣時間 10:00 至 23:58 安排自動來電")
+        with work_db() as db:
+            enabled, device, deliver = auto_policy(db)
+            if not enabled:
+                raise WorkError(403, "擁有人尚未啟用自動聯繫")
+            task = read_task(db, task_id)
+            unseal(key, task["body"])
+            prior = db.execute("SELECT event,due FROM vera_auto_requests WHERE task=?", (task_id,)).fetchone()
+            if prior:
+                return jsonify(event_id=prior[0], due_at=prior[1], replayed=True), 200
+            if task["state"] != "open":
+                raise WorkError(409, "工作已安排、已取消或已回傳")
+            if not credentials_configured():
+                raise WorkError(503, "Firebase 發送尚未設定")
+            first, end = day_bounds(due)
+            if db.execute("SELECT COUNT(*) FROM vera_auto_requests WHERE due>=? AND due<?",
+                          (first, end)).fetchone()[0] >= MAX_DAILY:
+                raise WorkError(429, "已達每日自動聯繫上限")
+            event = str(uuid4())
+            activate_new_work(db, task_id, device, event, due, False, deliver, now)
+            db.execute("INSERT INTO vera_auto_requests VALUES(?,?,?,?)", (task_id, event, due, device))
+        return jsonify(event_id=event, due_at=due, state="queued", replayed=False), 202
 
     @app.get("/api/v1/work/results")
     def result_inbox():

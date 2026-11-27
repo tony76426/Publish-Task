@@ -54,6 +54,33 @@
       <label class="secretary-check"><input id="v3WorkRetry" type="checkbox"> 未接時五分鐘後重撥一次</label>
       <div class="secretary-actions"><button type="submit">安排來電</button><button type="button" class="secondary" id="v3ScheduleClose">關閉</button></div>
     </form>`);
+  const autoCard = mount('settings', `
+    <h2>ChatGPT 自動聯繫</h2>
+    <p>台灣時間每日 10:00–24:00；每日最多兩次，午夜前保留一分鐘安全緩衝。不影響手動安排。</p>
+    <label class="secretary-check"><input id="v3AutoEnable" type="checkbox"> 允許 ChatGPT 安排本機來電</label>
+    <label class="secretary-check"><input id="v3AutoReturn" type="checkbox"> 自動回傳我明確給出的決策及指示</label>
+    <div class="secretary-actions"><button id="v3AutoSave" type="button">儲存授權</button><button id="v3AutoRefresh" type="button" class="secondary">查詢狀態</button></div>
+    <p id="v3AutoStatus" role="status" class="muted">尚未查詢授權</p>`);
+  async function refreshAuto() {
+    try {
+      const result = await requestWork('/auto-call');
+      $('v3AutoEnable').checked = result.enabled && result.device_id === device().device_id;
+      $('v3AutoReturn').checked = result.return_result;
+      message($('v3AutoStatus'), result.enabled ? ($('v3AutoEnable').checked ? '本機已授權' : '另一裝置已授權') : '未開啟自動聯繫');
+    } catch(error) { message($('v3AutoStatus'), error.message); }
+  }
+  $('v3AutoRefresh').onclick = refreshAuto;
+  $('v3AutoSave').onclick = async () => {
+    const enabled = $('v3AutoEnable').checked, installation = device();
+    if(enabled && (!installation.device_id || !installation.enabled)) return message($('v3AutoStatus'), '請先註冊本機推播');
+    if(enabled && !window.confirm('允許 ChatGPT 安排本機來電？可隨時取消授權。')) return;
+    $('v3AutoSave').disabled = true;
+    try {
+      await requestWork('/auto-call','PUT',{enabled,device_id:installation.device_id || '',return_result:enabled && $('v3AutoReturn').checked});
+      await refreshAuto();
+    } catch(error) { message($('v3AutoStatus'),error.message); }
+    finally { $('v3AutoSave').disabled = false; }
+  };
   const archiveCard = mount('history', `
     <h2>雲端通話與決策</h2><p id="v3CallStatus" class="muted" role="status"></p>
     <div class="secretary-actions"><button type="button" class="secondary" id="v3CallRefresh">重新整理</button></div><div id="v3CallList"></div>`);
