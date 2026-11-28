@@ -1,0 +1,22 @@
+name: VERA Render network reachability (diagnostic only)
+on:
+  push:
+    branches: [diagnostic/vera-network-20261129]
+    paths:
+      - '.github/workflows/vera-reachability.yml'
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Probe public health and unauthenticated read-only API (no redirects)
+        shell: bash
+        run: |
+          set -u
+          for path in /health /api/v1/work/tasks; do
+            exit_code=0
+            result=$(curl --silent --show-error --connect-timeout 7 --max-time 15 --max-redirs 0 --output /dev/null --write-out 'http=%{http_code};redirect=%{redirect_url};tls_verify=%{ssl_verify_result};ip=%{remote_ip};time=%{time_total}' "https://publish-task.onrender.com${path}") || exit_code=$?
+            printf '%s exit=%s %s\n' "$path" "$exit_code" "$result"
+          done
