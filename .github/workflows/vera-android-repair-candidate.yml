@@ -1,0 +1,93 @@
+name: VERA Android call repair candidate (isolated)
+on:
+  push:
+    branches: [fix/vera-android-call-bluegray-20261129]
+    paths:
+      - '.github/workflows/vera-android-repair-candidate.yml'
+      - 'android/**'
+      - 'vera_v3.css'
+      - 'vera_cloud_ui.js'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test backend and bridge without production access
+        run: |
+          pip install -r requirements-vera.txt
+          python -m unittest -v test_vera_push test_vera_cloud test_vera_work
+          node --check vera_cloud_ui.js
+          node --check vera_v3_ui.js
+          node --test sites/vera-bridge/worker.test.mjs
+          python - <<'PY'
+          from pathlib import Path
+          css = Path('vera_v3.css').read_text()
+          assert '--navy:#243d5a;' in css
+          assert '--sage:' not in css and '--beige:' not in css
+          reminder = Path('android/app/src/main/java/tw/vera/nexus/ReminderReceiver.java').read_text()
+          assert 'postIncoming' in reminder and 'Fallback notification rejected' in reminder
+          assert reminder.index('postIncoming(c,nm,kind,open,no,true)') < reminder.index('postIncoming(c,nm,kind,open,no,false)')
+          print('Blue-gray palette and notification fallback checks passed.')
+          PY
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Install Android build tools
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build signed candidate if authorized signer available (otherwise debug)
+        env:
+          FIREBASE_CLIENT: ${{ vars.VERA_FIREBASE_ANDROID_CONFIG }}
+          SIGNING_STORE_B64: ${{ secrets.VERA_SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASS: ${{ secrets.VERA_SIGNING_STORE_PASSWORD }}
+          SIGNING_ALIAS: ${{ secrets.VERA_SIGNING_ALIAS }}
+          SIGNING_KEY_PASS: ${{ secrets.VERA_SIGNING_KEY_PASSWORD }}
+          EXPECTED_SIGNER: ${{ vars.VERA_UPGRADE_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$FIREBASE_CLIENT" ]]; then echo '::error::Firebase Android config is absent; refusing to build a nonfunctional push APK'; exit 1; fi
+          umask 077
+          printf '%s' "$FIREBASE_CLIENT" > android/app/google-services.json
+          if [[ -n "$SIGNING_STORE_B64" && -n "$SIGNING_STORE_PASS" && -n "$SIGNING_ALIAS" && -n "$SIGNING_KEY_PASS" ]]; then
+            KEYFILE=$(mktemp)
+            trap 'rm -f "$KEYFILE" android/app/google-services.json' EXIT
+            printf '%s' "$SIGNING_STORE_B64" | base64 -d > "$KEYFILE"
+            export VERA_SIGNING_FILE="$KEYFILE" VERA_SIGNING_STORE_PASSWORD="$SIGNING_STORE_PASS" VERA_SIGNING_ALIAS="$SIGNING_ALIAS" VERA_SIGNING_KEY_PASSWORD="$SIGNING_KEY_PASS"
+            (cd android && gradle --no-daemon :app:assembleRelease)
+            cp android/app/build/outputs/apk/release/app-release.apk VERA-Nexus-repair-candidate.apk
+            printf 'signed-release-candidate\n' > VERA-build-kind.txt
+            if [[ -n "$EXPECTED_SIGNER" ]]; then
+              SIGNER=$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs VERA-Nexus-repair-candidate.apk | awk '/Signer #1 certificate SHA-256 digest:/ {print $NF}')
+              test "${SIGNER,,}" = "${EXPECTED_SIGNER,,}" || { echo '::error::Upgrade signer mismatch'; exit 1; }
+            fi
+          else
+            trap 'rm -f android/app/google-services.json' EXIT
+            (cd android && gradle --no-daemon :app:assembleDebug)
+            cp android/app/build/outputs/apk/debug/app-debug.apk VERA-Nexus-repair-candidate.apk
+            printf 'debug-test-candidate-not-safe-to-upgrade-release\n' > VERA-build-kind.txt
+          fi
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify VERA-Nexus-repair-candidate.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging VERA-Nexus-repair-candidate.apk | grep "package: name='tw.vera.nexus'"
+          sha256sum VERA-Nexus-repair-candidate.apk > VERA-Nexus-repair-candidate.apk.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VERA-Nexus-Android-call-repair-candidate
+          path: |
+            VERA-Nexus-repair-candidate.apk
+            VERA-Nexus-repair-candidate.apk.sha256
+            VERA-build-kind.txt
