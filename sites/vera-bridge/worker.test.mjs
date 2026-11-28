@@ -70,3 +70,41 @@ test('request_call uses the scoped route and no caller-supplied device or return
   const response=await (await call('tools/call',{name:'request_call',arguments:{task_id,due_at:1800000000}})).json();
   assert.equal(JSON.parse(response.result.content[0].text).state,'queued');
 });
+
+test('network failures are categorized without exposing raw connection errors', async t => {
+  t.mock.method(globalThis,'fetch',async () => {
+    throw new TypeError('Bearer private-secret: fetch failed');
+  });
+  const result = await (await call('tools/call',{name:'list_tasks',arguments:{}})).json();
+  const message = result.result.content[0].text;
+  assert.equal(result.result.isError,true);
+  assert.match(message,/網路連線或重新導向失敗/);
+  assert.doesNotMatch(message,/private-secret|Bearer/);
+});
+
+test('fetch timeouts are distinguished from network failures', async t => {
+  t.mock.method(globalThis,'fetch',async () => {
+    const error = new Error('secret details');
+    error.name = 'TimeoutError';
+    throw error;
+  });
+  const result = await (await call('tools/call',{name:'list_tasks',arguments:{}})).json();
+  assert.equal(result.result.isError,true);
+  assert.match(result.result.content[0].text,/連線逾時（12 秒）/);
+  assert.doesNotMatch(result.result.content[0].text,/secret details/);
+});
+
+test('unexpected JSON is distinct from HTTP error status', async t => {
+  t.mock.method(globalThis,'fetch',async () => new Response('not-json',{status:200}));
+  const result = await (await call('tools/call',{name:'list_tasks',arguments:{}})).json();
+  assert.equal(result.result.isError,true);
+  assert.match(result.result.content[0].text,/回應解析失敗（HTTP 200）/);
+});
+
+test('upstream HTTP status remains visible without response body', async t => {
+  t.mock.method(globalThis,'fetch',async () => Response.json({error:'private details'},{status:503}));
+  const result = await (await call('tools/call',{name:'list_tasks',arguments:{}})).json();
+  assert.equal(result.result.isError,true);
+  assert.equal(result.result.content[0].text,'VERA 工作 API 回傳 HTTP 503');
+  assert.doesNotMatch(result.result.content[0].text,/private details/);
+});
