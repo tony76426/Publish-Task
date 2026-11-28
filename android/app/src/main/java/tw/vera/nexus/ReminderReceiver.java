@@ -82,6 +82,7 @@ public final class ReminderReceiver extends BroadcastReceiver {
   PendingIntent no=PendingIntent.getBroadcast(c,902,decline,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
   NotificationManager nm=c.getSystemService(NotificationManager.class);
   if(nm==null){p.edit().putString("lastNotificationFailure","manager_unavailable").apply();finishCall(c,now,"failed");return;}
+  p.edit().remove("lastNotificationFailure").remove("lastNotificationFallback").apply();
   boolean posted=false;
   if(Build.VERSION.SDK_INT>=31){
    try {postIncoming(c,nm,kind,open,no,true);posted=true;}
