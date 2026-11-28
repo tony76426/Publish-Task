@@ -88,7 +88,7 @@ public final class ReminderReceiver extends BroadcastReceiver {
    catch(RuntimeException e){
     // Log only the exception class. Never log event IDs, call content or credentials.
     android.util.Log.w("VERA-CALL","CallStyle rejected: "+e.getClass().getSimpleName());
-    p.edit().putString("lastNotificationFailure","callstyle_"+e.getClass().getSimpleName()).apply();
+    p.edit().putString("lastNotificationFallback","callstyle_"+e.getClass().getSimpleName()).apply();
    }
   }
   if(!posted){
@@ -99,7 +99,7 @@ public final class ReminderReceiver extends BroadcastReceiver {
    }
   }
   if(!posted){finishCall(c,now,"failed");return;}
-  if(p.getString("lastNotificationFailure","").startsWith("fallback_"))p.edit().remove("lastNotificationFailure").apply();
+  p.edit().remove("lastNotificationFailure").apply();
   PushEnrollment.report(c,event,"ringing");
   schedule(c,TIMEOUT,now+RING_MS+1000);
  }
