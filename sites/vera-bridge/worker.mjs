@@ -99,13 +99,24 @@ export default {
     if (!args || typeof args !== 'object' || Array.isArray(args)) return toolReply(id,'工具參數無效。',true);
     try {
       const [target, method, body] = route(params.name, args);
-      const response = await fetch(origin + root + target,{
-        method,headers:{Authorization:'Bearer '+env.VERA_WORK_TOKEN,'Content-Type':'application/json'},
-        body:body === undefined ? undefined : JSON.stringify(body),redirect:'error',
-        signal:AbortSignal.timeout(12000)
-      });
+      let response;
+      try {
+        response = await fetch(origin + root + target,{
+          method,headers:{Authorization:'Bearer '+env.VERA_WORK_TOKEN,'Content-Type':'application/json'},
+          body:body === undefined ? undefined : JSON.stringify(body),redirect:'error',
+          signal:AbortSignal.timeout(12000)
+        });
+      } catch (error) {
+        const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+        return toolReply(id,timedOut ? 'VERA 工作 API 連線逾時（12 秒）' :
+          'VERA 工作 API 網路連線或重新導向失敗',true);
+      }
       if (!response.ok) return toolReply(id,'VERA 工作 API 回傳 HTTP '+response.status,true);
-      return toolReply(id,await response.json());
+      try {
+        return toolReply(id,await response.json());
+      } catch {
+        return toolReply(id,'VERA 工作 API 回應解析失敗（HTTP '+response.status+'）',true);
+      }
     } catch (error) {
       if (['工作 ID 無效','結果游標無效','接續工作識別碼無效','來電時間無效'].includes(error.message)) return toolReply(id,error.message,true);
       return toolReply(id,'目前無法連到 VERA 工作 API。',true);
