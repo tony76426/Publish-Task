@@ -22,10 +22,10 @@ import android.widget.TextView;
 import java.util.UUID;
 
 public final class IncomingActivity extends Activity {
-    private static final int INK = Color.rgb(39, 46, 40);
-    private static final int MUTED = Color.rgb(85, 97, 88);
-    private static final int PAPER = Color.rgb(250, 248, 240);
-    private static final int SAGE = Color.rgb(58, 81, 68);
+    private static final int INK = Color.rgb(31, 48, 72);
+    private static final int MUTED = Color.rgb(82, 101, 123);
+    private static final int PAPER = Color.rgb(245, 248, 252);
+    private static final int NAVY = Color.rgb(34, 58, 86);
     private final Handler timer = new Handler(Looper.getMainLooper());
     private long id;
     private TextView remaining, status;
@@ -76,9 +76,9 @@ public final class IncomingActivity extends Activity {
         scroll.addView(root);
         setContentView(scroll);
 
-        TextView monogram = label("V", 44, SAGE);
+        TextView monogram = label("V", 44, NAVY);
         GradientDrawable emblem = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[]{Color.rgb(235, 220, 184), Color.rgb(223, 230, 217)});
+                new int[]{Color.rgb(225, 236, 248), Color.rgb(156, 177, 202)});
         emblem.setShape(GradientDrawable.OVAL);
         monogram.setBackground(emblem);
         root.addView(monogram, new LinearLayout.LayoutParams(dp(94), dp(94)));
@@ -99,8 +99,8 @@ public final class IncomingActivity extends Activity {
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER);
         append(root, actions, 34);
-        Button decline = action("拒絕", Color.rgb(233, 221, 208), INK);
-        answer = action("接聽", SAGE, Color.WHITE);
+        Button decline = action("拒絕", Color.rgb(221, 231, 242), INK);
+        answer = action("接聽", NAVY, Color.WHITE);
         LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(0, dp(62), 1);
         left.setMarginEnd(dp(12));
         actions.addView(decline, left);

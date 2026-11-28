@@ -100,6 +100,12 @@
     text('cloudApkVersion', ({7: '0.1.6', 8: '0.2.0', 9: '0.2.1', 10: '0.3.0', 11: '0.3.0'})[window.VeraAndroid?.apkVersion?.()] || '網頁或未知版本');
     text('cloudNotifications', native ? label(info.notifications, '通知已允許', '需要允許通知') : '僅 Android 支援');
     text('cloudFullscreen', native ? label(info.fullscreen && reminderState().fullscreen, '全螢幕來電已允許', '使用一般通知') : '僅 Android 支援');
+    const notificationDiagnostics = native ? reminderState() : {};
+    if (notificationDiagnostics.lastNotificationFailure) {
+      text('cloudNotice', 'Android 通知失敗原因：' + notificationDiagnostics.lastNotificationFailure);
+    } else if (notificationDiagnostics.lastNotificationFallback) {
+      text('cloudNotice', '已使用相容通知模式（' + notificationDiagnostics.lastNotificationFallback + '）');
+    }
     text('cloudDevice', info.enabled ? '確認中' : '此手機尚未啟用');
     text('cloudCredentials', token() ? '確認中' : '驗證私人連線後顯示');
     const canEnroll = Boolean(info.configured && info.notifications && token());
